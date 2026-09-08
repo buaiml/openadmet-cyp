@@ -56,13 +56,14 @@ def _resolve_models(names: list[str]) -> list[type[CYPModel]]:
     return [REGISTRY[n] for n in names]
 
 
-def _print_results(results: list[tuple[str, dict[str, float]]]) -> None:
-    """Print a formatted metrics table to stdout."""
-    w = max(len(name) for name, _ in results)
-    print(f"{'Model':{w}}  {'RMSE':>8}  {'MAE':>8}  {'R2':>8}")
-    print(f"{'-' * w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
-    for name, m in results:
-        print(f"{name:{w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
+def _print_results(results: list[tuple[str, str, dict[str, float]]]) -> None:
+    """Print a formatted metrics table (Isoform, Model, RMSE, MAE, R2) to stdout."""
+    iso_w = max(len(iso) for iso, _, _ in results)
+    model_w = max(len(name) for _, name, _ in results)
+    print(f"{'Isoform':{iso_w}}  {'Model':{model_w}}  {'RMSE':>8}  {'MAE':>8}  {'R2':>8}")
+    print(f"{'-' * iso_w}  {'-' * model_w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
+    for iso, name, m in results:
+        print(f"{iso:{iso_w}}  {name:{model_w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
 
 
 def main() -> None:
@@ -85,10 +86,18 @@ def main() -> None:
     )
     parser.add_argument("--models", nargs="+", default=["all"], help="Model names to evaluate, or 'all'")
     parser.add_argument(
-        "--target",
-        default="CYP3A4_pIC50_direct_inhibition",
+        "--isoform-mode",
+        default="separate",
+        choices=["separate"],
+        help="How to handle the 4 CYP isoforms. 'separate' (default): fit and evaluate an "
+        "independent model per isoform, sharing one feature matrix.",
+    )
+    parser.add_argument(
+        "--targets",
+        nargs="+",
+        default=_CYP_TARGETS,
         choices=_CYP_TARGETS,
-        help="CYP target column to predict",
+        help="CYP target column(s) to evaluate (default: all four isoforms)",
     )
     parser.add_argument(
         "--input",
@@ -124,15 +133,21 @@ def main() -> None:
     )
     print(f"load_data(split_type={args.split!r}, seed={args.seed}): {len(val_df)} val / {len(train_df)} train molecules", file=sys.stderr)
 
-    X_train, y_train = drop_nan_rows(
-        featurize(train_df, args.input, cache_dir), train_df[args.target].to_numpy(), label="train"
-    )
-    X_val, y_val = drop_nan_rows(featurize(val_df, args.input, cache_dir), val_df[args.target].to_numpy(), label="val")
+    # Features don't depend on the target isoform, so compute once and reuse across isoforms.
+    train_features = featurize(train_df, args.input, cache_dir)
+    val_features = featurize(val_df, args.input, cache_dir)
 
-    results = [(cls.name, _evaluate_model(cls(), X_train, y_train, X_val, y_val)) for cls in model_classes]
+    results: list[tuple[str, str, dict[str, float]]] = []
+    for target in args.targets:
+        X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{target}")
+        X_val, y_val = drop_nan_rows(val_features, val_df[target].to_numpy(), label=f"val/{target}")
+        for cls in model_classes:
+            metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+            results.append((target, cls.name, metrics))
+
     reverse = args.sort_by == "R2"
-    results.sort(key=lambda r: r[1][args.sort_by], reverse=reverse)
-    print(f"target={args.target}  input={' + '.join(args.input)}  split={args.split}  seed={args.seed}")
+    results.sort(key=lambda r: (r[0], -r[2][args.sort_by] if reverse else r[2][args.sort_by]))
+    print(f"isoform-mode={args.isoform_mode}  input={' + '.join(args.input)}  split={args.split}  seed={args.seed}")
     _print_results(results)
 
 
