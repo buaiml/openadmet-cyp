@@ -1,5 +1,7 @@
 polars
 huggingface_hub
 rdkit
+scikit-learn
 numpy
 tqdm
+matplotlib

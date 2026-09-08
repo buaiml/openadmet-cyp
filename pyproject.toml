@@ -14,6 +14,8 @@ dynamic = ["version", "dependencies"]
 
 [project.scripts]
 download-data = "data_tools.download:main"
+evaluate-models = "models.evaluate:main"
+generate-results = "models.predict:main"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
