@@ -1,0 +1,2 @@
+polars
+huggingface_hub

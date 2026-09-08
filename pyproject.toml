@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openadmet-cyp"
+authors = [
+    {name = "Denali Schlesinger", email = "dsch28@bu.edu"},
+]
+description = "Code for OpenADMET CYP Inhibition Blind Challenge"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["version", "dependencies"]
+
+[project.scripts]
+download-data = "data_tools.download:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = "tests"
