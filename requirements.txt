@@ -1,2 +1,3 @@
 polars
 huggingface_hub
+rdkit
