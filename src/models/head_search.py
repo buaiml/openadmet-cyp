@@ -51,8 +51,6 @@ _SCORED_DEFAULT = [
     "CYP3A4_pIC50_direct_inhibition",
 ]
 
-_ISOFORMS = ["CYP1A2", "CYP2C9", "CYP2C19", "CYP2D6", "CYP3A4"]
-
 _MSE_LINE = re.compile(r"test/(?P<head>[\w.]+)/mse:\s*(?P<value>[-\d.eE+]+)")
 
 
@@ -63,11 +61,18 @@ def discover_candidates(
 ) -> dict[str, list[str]]:
     """Group auxiliary label columns into named candidates.
 
-    'isoform' granularity bundles every auxiliary readout of one isoform into a
-    single candidate, which directly tests "does this isoform's data help?".
-    'readout' treats each column separately, which can separate a useful
-    percent-inhibition head from a less useful fitted-pIC50 head on the same
-    isoform, at the cost of doubling the search.
+    Grouping is derived from the column name, not a fixed isoform list, so
+    heads from any source join the search automatically. Column names are
+    `{protein}_{readout}_{source}`, so the leading token is the protein.
+
+    'protein' granularity bundles every auxiliary readout of one protein into
+    a single candidate, which directly tests "does this isoform's data help?"
+    -- including across sources, so a protein measured by both the qHTS panel
+    and ChEMBL is one candidate.
+    'source' keeps protein and source separate, which can distinguish a useful
+    ChEMBL pIC50 head from a less useful percent-inhibition head on the same
+    protein.
+    'readout' treats every column separately, the finest and most expensive.
     """
     skip = set(scored_columns) | {"SMILES", "inchikey_block", "inchikey_full", "split", "PUBCHEM_CID"}
     aux = [c for c in df.columns if c not in skip and df[c].dtype.is_numeric()]
@@ -76,13 +81,13 @@ def discover_candidates(
         return {c: [c] for c in aux}
 
     candidates: dict[str, list[str]] = {}
-    for isoform in _ISOFORMS:
-        members = [c for c in aux if c.startswith(f"{isoform}_")]
-        if members:
-            candidates[isoform] = members
-    leftover = [c for c in aux if not any(c in members for members in candidates.values())]
-    for c in leftover:
-        candidates[c] = [c]
+    for column in aux:
+        parts = column.split("_")
+        if granularity == "source" and len(parts) >= 3:
+            name = f"{parts[0]}_{parts[-1]}"
+        else:
+            name = parts[0]
+        candidates.setdefault(name, []).append(column)
     return candidates
 
 
@@ -275,9 +280,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--granularity",
-        default="isoform",
-        choices=["isoform", "readout"],
-        help="Bundle auxiliary columns per isoform (default) or treat each column separately",
+        default="protein",
+        choices=["protein", "source", "readout"],
+        help="Bundle auxiliary columns per protein across sources (default), per protein+source, "
+        "or one candidate per column",
     )
     parser.add_argument("--seeds", type=int, default=3, help="Seeds per configuration (default: 3)")
     parser.add_argument("--epochs", type=int, default=30, help="Epochs per run (default: 30)")
