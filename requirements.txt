@@ -5,3 +5,5 @@ scikit-learn
 numpy
 tqdm
 matplotlib
+torch
+chemprop

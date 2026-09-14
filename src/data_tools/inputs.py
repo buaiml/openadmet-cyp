@@ -6,17 +6,24 @@ from typing import Callable
 import numpy as np
 import polars as pl
 
+from representations.chemeleon import CheMeleon
 from representations.rdkit_descriptors import RDKitDescriptors
 
 _rdkit = RDKitDescriptors()
+_chemeleon = CheMeleon()
 
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
     return _rdkit.transform(df["SMILES"])
 
 
+def _chemeleon_features(df: pl.DataFrame) -> np.ndarray:
+    return _chemeleon.transform(df["SMILES"])
+
+
 INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _rdkit.name: _rdkit_features,
+    _chemeleon.name: _chemeleon_features,
 }
 
 
