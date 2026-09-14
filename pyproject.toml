@@ -21,6 +21,8 @@ build-family-datasets = "data_tools.family_datasets:main"
 build-pubchem-aux = "data_tools.pubchem:main"
 build-union = "data_tools.build_union:main"
 check-overlap = "data_tools.overlap:main"
+add-split-column = "data_tools.split_column:main"
+head-search = "models.head_search:main"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
