@@ -7,6 +7,13 @@ from typing import Literal
 import polars as pl
 
 _DEFAULT_DATA_DIR = Path("data")
+
+# Label columns are sparse: in a multi-source union table a column can be null
+# for the first thousands of rows, so polars' default 100-row schema inference
+# types it String and every downstream numeric op fails. Always infer from the
+# whole file.
+_INFER_ALL = None
+
 _TRAIN_FILE = "train.csv"
 _TEST_FILE = "test.csv"
 _TDI_TRAIN_FILE = "tdi_train.csv"
@@ -16,27 +23,27 @@ _SINGLE_CONC_TRAIN_FILE = "single_concentration_train.csv"
 
 def load_train(path: Path = _DEFAULT_DATA_DIR / _TRAIN_FILE) -> pl.DataFrame:
     """Return the direct-inhibition training split as a Polars DataFrame."""
-    return pl.read_csv(path)
+    return pl.read_csv(path, infer_schema_length=_INFER_ALL)
 
 
 def load_test(path: Path = _DEFAULT_DATA_DIR / _TEST_FILE) -> pl.DataFrame:
     """Return the blinded test split as a Polars DataFrame."""
-    return pl.read_csv(path)
+    return pl.read_csv(path, infer_schema_length=_INFER_ALL)
 
 
 def load_tdi_train(path: Path = _DEFAULT_DATA_DIR / _TDI_TRAIN_FILE) -> pl.DataFrame:
     """Return the time-dependent inhibition (TDI) training split as a Polars DataFrame."""
-    return pl.read_csv(path)
+    return pl.read_csv(path, infer_schema_length=_INFER_ALL)
 
 
 def load_emax_train(path: Path = _DEFAULT_DATA_DIR / _EMAX_TRAIN_FILE) -> pl.DataFrame:
     """Return the Emax training split as a Polars DataFrame."""
-    return pl.read_csv(path)
+    return pl.read_csv(path, infer_schema_length=_INFER_ALL)
 
 
 def load_single_concentration_train(path: Path = _DEFAULT_DATA_DIR / _SINGLE_CONC_TRAIN_FILE) -> pl.DataFrame:
     """Return the single-concentration training split as a Polars DataFrame."""
-    return pl.read_csv(path)
+    return pl.read_csv(path, infer_schema_length=_INFER_ALL)
 
 
 def _random_split(df: pl.DataFrame, val_fraction: float, seed: int) -> tuple[pl.DataFrame, pl.DataFrame]:
