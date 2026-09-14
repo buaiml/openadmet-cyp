@@ -1,11 +1,17 @@
 """CLI wrapper to train a Chemprop D-MPNN on any SMILES/target CSV.
 
-Generic over dataset: point it at train.csv, tdi_train.csv, emax_train.csv,
-single_concentration_train.csv, or any external "family" dataset, to compare
-which pretraining source transfers best to the CYP targets. Thin subprocess
-wrapper around the `chemprop train` CLI so all of chemprop's own flags
-(--batch-size, --num-workers, --accelerator, --split-type, ...) stay
-available via passthrough, instead of being re-declared here.
+Built for joint multi-task training rather than pretrain-then-finetune: pass
+every head at once via --target-columns (see data_tools.build_union, which
+emits the wide challenge + auxiliary table). One shared encoder learns from
+all sources; each head keeps its own scale, so no cross-assay calibration is
+required. Chemprop masks missing targets in the loss automatically, so the
+sparse block structure of a multi-source union costs nothing -- molecules
+measured by only one source simply contribute to that head.
+
+Thin subprocess wrapper around the `chemprop train` CLI so all of chemprop's
+own flags (--batch-size, --num-workers, --accelerator, --split-type,
+--task-weights, ...) stay available via passthrough, instead of being
+re-declared here.
 """
 
 import argparse
@@ -57,7 +63,13 @@ def main() -> None:
     )
     parser.add_argument("--data-path", type=Path, required=True, help="CSV with a SMILES column and target column(s)")
     parser.add_argument("--smiles-column", default="SMILES", help="Name of the SMILES column (default: SMILES)")
-    parser.add_argument("--target-columns", nargs="+", required=True, help="Name(s) of the target column(s) to train on")
+    parser.add_argument(
+        "--target-columns",
+        nargs="+",
+        required=True,
+        help="Name(s) of the target column(s) to train on. Pass every head for joint multi-task "
+        "training; missing values are masked in the loss by chemprop.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
