@@ -2,6 +2,12 @@
 
 Code for the OpenADMET CYP Inhibition Blind Challenge.
 
+**Contributing:** read [RULES.md](RULES.md) before opening a PR — how a PR should
+look, what must never be committed, the rule that only Denali submits to the live
+HuggingFace challenge, and how to use AI tools. Pick a workstream from
+[tasks/MANIFEST.md](tasks/MANIFEST.md), which also holds the shared metric, the
+pinned split and the join keys.
+
 ## Setup
 
 ```bash
