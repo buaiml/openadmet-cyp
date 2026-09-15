@@ -72,8 +72,7 @@ same check (`check-overlap`).
 Everything else is owned by exactly one task.
 
 **`data/` and `results/` are gitignored.** Commit code and reports, not
-artifacts. If you generate a result table that a report cites, coordinate with
-T8 — see that file for the provenance problem this has already caused once.
+artifacts. Do not commit results to GitHub.
 
 ---
 
@@ -82,17 +81,9 @@ T8 — see that file for the provenance problem this has already caused once.
 Several tasks need GPU time beyond what a laptop provides. The existing pattern
 is `scripts/head_search.qsub` + `scripts/run_head_search.sh`.
 
-**If your task needs the SCC, contact Denali with your code** — she has the
+**If your task needs the SCC, contact Denali with your code** — he has the
 project allocation and will get it queued. Do not burn days fighting the
 scheduler yourself.
-
-Two things that will bite you, already learned the hard way:
-
-- Keep `#$ -l gpu_c=7.0` in the qsub. Older SCC GPUs lack the kernels for our
-  torch build and fail with `cudaErrorNoKernelImageForDevice`. If you hit that
-  error anyway, *raise* it to 8.0 — do not drop the line.
-- Pad `h_rt` generously. A greedy head search over k candidates is
-  ~1 + k(k+1)/2 configs × seeds × epochs.
 
 Tasks flagged **Heavy GPU**: T5 (by far the largest), T6, T1, T4.
 Tasks with moderate GPU needs: T3 (TabPFN inference), T7.

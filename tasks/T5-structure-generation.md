@@ -142,7 +142,7 @@ ipTM/pLDDT for co-folders, the model's own score for docking.
 ## SCC note
 
 **⚠️ This task cannot be done on a laptop. Contact Denali with your code to get
-it running on the BU SCC.** She has the project allocation.
+it running on the BU SCC.** He has the project allocation.
 
 Practical guidance:
 
