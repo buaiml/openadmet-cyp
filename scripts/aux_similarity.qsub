@@ -19,7 +19,7 @@ module load miniconda
 # leaves the job running in base conda, where the packaged polars is built for
 # CPU features these nodes lack and every script dies with SIGILL -- a
 # confusing crash several steps removed from the actual cause.
-CONDA_ENV="${CONDA_ENV:-openadmet-cyp}"
+CONDA_ENV="${CONDA_ENV:-cyp}"
 if ! conda activate "$CONDA_ENV" 2>/dev/null; then
     echo "Could not activate conda env '$CONDA_ENV'." >&2
     echo "Set CONDA_ENV to the env head_search.qsub uses. Available:" >&2
