@@ -1,0 +1,21 @@
+#!/bin/bash -l
+#$ -P your_project_here      # TODO: SCC project allocation (same one head_search.qsub uses)
+#$ -N aux_similarity
+#$ -j y
+#$ -o aux_similarity.qlog
+#$ -l h_rt=2:00:00           # fingerprinting ~21k molecules + ~20 heads x 490 eval NN searches
+#$ -pe omp 4                 # CPU only -- no GPU, this trains nothing
+
+module load miniconda
+conda activate openadmet-cyp   # TODO: match head_search.qsub
+
+cd "$SGE_O_WORKDIR"
+
+python scripts/aux_similarity.py \
+    --data-path data/union_train.csv \
+    --results-path results/head_search.json \
+    --out results/aux_similarity.csv
+
+python scripts/plot_similarity_vs_gain.py \
+    --in results/aux_similarity.csv \
+    --out reports/similarity_vs_gain.png
