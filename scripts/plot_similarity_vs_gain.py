@@ -23,7 +23,7 @@ import polars as pl  # noqa: E402
 
 _PANELS = [
     ("nn_tanimoto_mean", "Mean nearest-neighbour ECFP4 Tanimoto to eval set"),
-    ("eval_in_aux_frac", "Fraction of eval molecules supervised by this head"),
+    ("eval_in_aux_frac", "Fraction of eval molecules drawn from this head's library"),
     ("scaffold_overlap_frac", "Fraction of eval scaffolds present in this head's train rows"),
 ]
 

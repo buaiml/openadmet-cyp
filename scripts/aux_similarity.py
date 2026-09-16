@@ -4,26 +4,31 @@ The question this answers: head-search says one aux head is worth ~0.21 macro
 RMSE. Is that transfer, or is the aux data just carrying molecules that look
 like the held-out molecules the RMSE is scored on?
 
-Three distinct channels can produce a gain that is not transfer, and they are
-not the same thing, so this reports all three separately:
+head-search trains via `chemprop --splits-column split`, which is a *row-wise*
+split: a held-out molecule is held out entirely, every label with it. So there
+is no channel by which an eval molecule's own auxiliary label reaches the
+encoder. What remains is proximity -- other molecules, near the eval ones,
+that the aux head drags into training -- and it comes in two forms:
 
-  1. Self-supervision. The union table is one row per molecule. A held-out
-     molecule whose *scored* label is hidden can still appear in training
-     through an auxiliary column on the same row. The encoder sees that exact
-     structure, with a correlated label, every epoch. Reported as
-     `eval_in_aux_frac`.
-
-  2. Scaffold leakage. add-split-column builds scaffold groups over scored
+  1. Scaffold leakage. add-split-column builds scaffold groups over scored
      rows only (data_tools.split_column.assign_splits) and forces
      auxiliary-only molecules to train. So an aux-only molecule sharing a
      Bemis-Murcko scaffold with a test molecule lands in train anyway --
-     the scaffold split does not protect against the aux table. Reported as
-     `scaffold_overlap_frac`.
+     the scaffold split protects the scored table and does nothing for the
+     aux table. Reported as `scaffold_overlap_frac`.
 
-  3. Plain nearest-neighbour proximity. For each eval molecule, the maximum
-     ECFP4 Tanimoto to any *training* molecule carrying this head's label,
-     with the eval molecule itself excluded so channel 1 does not leak into
-     this number. Reported as `nn_tanimoto_*`.
+  2. Nearest-neighbour proximity. For each eval molecule, the maximum ECFP4
+     Tanimoto to any *training* molecule carrying this head's label. Max, not
+     mean: leakage is a nearest-neighbour property. One close analogue of a
+     test molecule is what lets the model predict it, and that analogue is
+     invisible in a mean over every pair. Reported as `nn_tanimoto_*`, with
+     the `frac_ge_*` tail columns counting eval molecules that have such an
+     analogue at all.
+
+`eval_in_aux_frac` is reported too, but it is composition, not leakage: the
+share of eval molecules that also carry this head's label and were held out
+along with it. It says how far the eval set is drawn from the same library as
+the aux head, which is context for reading the two numbers above.
 
 Set size is the obvious confounder: a head with 16k molecules covers chemical
 space better than one with 800 for reasons that have nothing to do with the
@@ -100,10 +105,11 @@ def _scaffolds(smiles: list[str]) -> list[str | None]:
 def _nn_similarity(eval_fps: list, ref_fps: list, exclude: list[set[int]] | None = None) -> np.ndarray:
     """Max Tanimoto from each eval fingerprint to the reference set.
 
-    `exclude` gives, per eval molecule, reference positions to ignore -- used to
-    drop the eval molecule's own row so self-supervision does not inflate
-    what is meant to be a neighbour distance. Returns 0.0 where the reference
-    set is empty for that molecule.
+    `exclude` gives, per eval molecule, reference positions to ignore. The
+    split is row-wise, so an eval molecule is never in the training reference
+    set and this is normally a no-op; it is kept as a guard for tables where
+    the same structure survives under two rows. Returns 0.0 where the
+    reference set is empty for that molecule.
     """
     from rdkit import DataStructs
 
@@ -241,14 +247,15 @@ def main() -> None:
         member_set = set(member_rows)
         train_members = [r for r in member_rows if split[r] == "train"]
 
-        # Channel 1: eval molecules that are themselves supervised by this head.
+        # Composition, not leakage: these rows are held out with their aux
+        # labels, so this only says how far eval is drawn from the same library.
         eval_in_aux = sum(1 for r in eval_fp_rows if r in member_set)
 
-        # Channel 2: scaffold shared with a training molecule carrying this head.
+        # Channel 1: scaffold shared with a training molecule carrying this head.
         train_scaffolds = {scaffolds[r] for r in train_members if scaffolds[r] is not None}
         scaffold_hits = sum(1 for s in eval_scaffolds if s is not None and s in train_scaffolds)
 
-        # Channel 3: nearest-neighbour proximity, self-matches removed.
+        # Channel 2: nearest-neighbour proximity over the head's training rows.
         ref_rows = [r for r in train_members if r in fp_of_row]
         ref_fps = [fp_of_row[r] for r in ref_rows]
         position_of_row = {r: i for i, r in enumerate(ref_rows)}
