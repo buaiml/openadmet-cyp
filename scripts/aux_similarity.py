@@ -40,6 +40,11 @@ Two reference rows are emitted alongside the candidates:
                     baseline model saw) -- the floor any aux head must beat
   __train_all__     every training molecule, aux or not -- the ceiling
 
+Dependencies are deliberately just the stdlib, numpy and rdkit. The SCC
+compute nodes lack the AVX2/FMA/BMI CPU features the packaged polars wheel is
+built against, so importing it there dies with SIGILL; for a table this size
+polars bought nothing worth that risk.
+
 Usage (SCC):
     python scripts/aux_similarity.py \
         --data-path data/union_train.csv \
@@ -48,20 +53,89 @@ Usage (SCC):
 """
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
-import polars as pl
-
-_REPO_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(_REPO_SRC) not in sys.path:
-    sys.path.insert(0, str(_REPO_SRC))
-
-from models.head_search import _SCORED_DEFAULT, discover_candidates  # noqa: E402
 
 _TANIMOTO_THRESHOLDS = (0.4, 0.7)
+
+_SCORED_DEFAULT = [
+    "CYP1A2_pIC50_direct_inhibition",
+    "CYP2C9_pIC50_direct_inhibition",
+    "CYP2D6_pIC50_direct_inhibition",
+    "CYP3A4_pIC50_direct_inhibition",
+]
+
+# Mirrors models.head_search.discover_candidates. Duplicated rather than
+# imported because that module imports polars at module scope, which is fatal
+# on the SCC compute nodes (see module docstring). Keep the two in sync: if
+# head-search changes how it groups columns into candidates, this analysis
+# stops describing the run it claims to explain.
+_NON_LABEL_COLUMNS = {"SMILES", "inchikey_block", "inchikey_full", "split", "PUBCHEM_CID"}
+
+
+def read_table(path: Path) -> tuple[list[str], dict[str, list[str]]]:
+    """Read a CSV into (column order, {column: values as strings})."""
+    with path.open(newline="") as handle:
+        reader = csv.reader(handle)
+        try:
+            header = next(reader)
+        except StopIteration:
+            raise SystemExit(f"{path} is empty")
+        columns: dict[str, list[str]] = {name: [] for name in header}
+        for row in reader:
+            for name, value in zip(header, row):
+                columns[name].append(value)
+            for name in header[len(row):]:
+                columns[name].append("")
+    return header, columns
+
+
+def _is_numeric(values: list[str]) -> bool:
+    """True if every non-empty entry parses as a float (and at least one does)."""
+    seen = False
+    for value in values:
+        if value == "":
+            continue
+        try:
+            float(value)
+        except ValueError:
+            return False
+        seen = True
+    return seen
+
+
+def discover_candidates(header: list[str], columns: dict[str, list[str]], scored_columns: list[str], granularity: str) -> dict[str, list[str]]:
+    """Group auxiliary label columns into named candidates, as head-search does.
+
+    Column names are `{protein}_{readout}_{source}`, so the leading token is
+    the protein. 'protein' bundles every readout of one protein into a single
+    candidate; 'source' keeps protein and source apart; 'readout' treats every
+    column separately.
+    """
+    skip = set(scored_columns) | _NON_LABEL_COLUMNS
+    aux = [c for c in header if c not in skip and _is_numeric(columns[c])]
+
+    if granularity == "readout":
+        return {c: [c] for c in aux}
+
+    candidates: dict[str, list[str]] = {}
+    for column in aux:
+        parts = column.split("_")
+        if granularity == "source" and len(parts) >= 3:
+            name = f"{parts[0]}_{parts[-1]}"
+        else:
+            name = parts[0]
+        candidates.setdefault(name, []).append(column)
+    return candidates
+
+
+def _rows_with_any(columns: dict[str, list[str]], names: list[str], n_rows: int) -> list[int]:
+    """Row indices where at least one of `names` is non-empty."""
+    return [i for i in range(n_rows) if any(columns[name][i] != "" for name in names)]
 
 
 def _fingerprints(smiles: list[str]) -> tuple[list, list[int]]:
@@ -148,11 +222,16 @@ def load_gains(results_path: Path) -> tuple[float, dict[str, float]]:
 
     baseline = next((e["macro_rmse_mean"] for e in entries if not e["candidates"]), None)
     if baseline is None:
-        raise ValueError(f"{results_path} has no baseline entry (one with an empty 'candidates')")
+        raise SystemExit(f"{results_path} has no baseline entry (one with an empty 'candidates')")
 
     solo = {e["candidates"][0]: e["macro_rmse_mean"] for e in entries if len(e["candidates"]) == 1}
     print(f"{results_path}: baseline {baseline:.4f}, {len(solo)} solo heads", file=sys.stderr)
     return baseline, solo
+
+
+def _spearman(x: np.ndarray, y: np.ndarray) -> float:
+    """Spearman rank correlation between two equal-length vectors."""
+    return float(np.corrcoef(np.argsort(np.argsort(x)), np.argsort(np.argsort(y)))[0, 1])
 
 
 def main() -> None:
@@ -173,12 +252,7 @@ def main() -> None:
         choices=["protein", "source", "readout"],
         help="Must match the head-search run being explained",
     )
-    parser.add_argument(
-        "--scored-columns",
-        nargs="+",
-        default=_SCORED_DEFAULT,
-        help="Columns that count as scored labels",
-    )
+    parser.add_argument("--scored-columns", nargs="+", default=_SCORED_DEFAULT, help="Columns that count as scored labels")
     parser.add_argument(
         "--match-n",
         type=int,
@@ -189,32 +263,35 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    df = pl.read_csv(args.data_path, infer_schema_length=None)
-    if "split" not in df.columns:
+    header, columns = read_table(args.data_path)
+    if "split" not in columns:
         raise SystemExit(
             f"{args.data_path} has no 'split' column -- this analysis has to score proximity "
             "against the same held-out molecules head-search used. Run add-split-column first.",
         )
+    if "SMILES" not in columns:
+        raise SystemExit(f"{args.data_path} has no 'SMILES' column")
 
+    split = columns["split"]
+    n_rows = len(split)
     wanted = {"test", "val"} if args.eval_split == "test+val" else {args.eval_split}
-    split = df["split"].to_list()
-    eval_rows = [i for i, s in enumerate(split) if s in wanted]
-    train_rows = [i for i, s in enumerate(split) if s == "train"]
-    print(f"{args.data_path}: {len(df)} rows, {len(train_rows)} train, {len(eval_rows)} eval ({args.eval_split})", file=sys.stderr)
+    eval_rows = [i for i in range(n_rows) if split[i] in wanted]
+    train_rows = [i for i in range(n_rows) if split[i] == "train"]
+    print(f"{args.data_path}: {n_rows} rows, {len(train_rows)} train, {len(eval_rows)} eval ({args.eval_split})", file=sys.stderr)
     if not eval_rows:
         raise SystemExit(f"No rows with split in {sorted(wanted)}")
 
-    candidates = discover_candidates(df, args.scored_columns, args.granularity)
+    candidates = discover_candidates(header, columns, args.scored_columns, args.granularity)
     baseline_rmse, solo_rmse = load_gains(args.results_path)
 
     unmatched = sorted(set(solo_rmse) - set(candidates))
     if unmatched:
         print(f"WARNING: in head-search but not in this table: {unmatched}", file=sys.stderr)
 
-    smiles = df["SMILES"].to_list()
+    smiles = columns["SMILES"]
     print("Fingerprinting...", file=sys.stderr)
     all_fps, fp_rows = _fingerprints(smiles)
-    fp_of_row = {row: fp for row, fp in zip(fp_rows, all_fps)}
+    fp_of_row = dict(zip(fp_rows, all_fps))
 
     print("Computing scaffolds...", file=sys.stderr)
     scaffolds = _scaffolds(smiles)
@@ -225,10 +302,12 @@ def main() -> None:
     n_eval = len(eval_fp_rows)
 
     # Reference sets: what the baseline model already had, and everything in train.
-    scored_present = [c for c in args.scored_columns if c in df.columns]
-    has_scored = df.select(pl.any_horizontal([pl.col(c).is_not_null() for c in scored_present]))[:, 0].to_list()
+    scored_present = [c for c in args.scored_columns if c in columns]
+    if not scored_present:
+        raise SystemExit(f"None of the scored columns {args.scored_columns} are in {args.data_path}")
+    scored_rows = set(_rows_with_any(columns, scored_present, n_rows))
     reference_sets = {
-        "__train_scored__": [r for r in train_rows if has_scored[r]],
+        "__train_scored__": [r for r in train_rows if r in scored_rows],
         "__train_all__": list(train_rows),
     }
 
@@ -238,11 +317,10 @@ def main() -> None:
     for name in list(reference_sets) + sorted(candidates):
         if name in reference_sets:
             member_rows = reference_sets[name]
-            columns: list[str] = []
+            member_columns: list[str] = []
         else:
-            columns = candidates[name]
-            mask = df.select(pl.any_horizontal([pl.col(c).is_not_null() for c in columns]))[:, 0].to_list()
-            member_rows = [i for i, flag in enumerate(mask) if flag]
+            member_columns = candidates[name]
+            member_rows = _rows_with_any(columns, member_columns, n_rows)
 
         member_set = set(member_rows)
         train_members = [r for r in member_rows if split[r] == "train"]
@@ -264,7 +342,7 @@ def main() -> None:
 
         record = {
             "name": name,
-            "n_columns": len(columns),
+            "n_columns": len(member_columns),
             "n_molecules": len(member_rows),
             "n_train_molecules": len(train_members),
             "eval_in_aux_frac": eval_in_aux / n_eval if n_eval else float("nan"),
@@ -302,31 +380,31 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    out = pl.DataFrame(records).sort("gain", descending=True, nulls_last=True)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_csv(args.out)
-    print(f"\nWrote {args.out} ({len(out)} rows)", file=sys.stderr)
+    records.sort(key=lambda r: (np.isnan(r["gain"]), -r["gain"] if not np.isnan(r["gain"]) else 0.0))
 
-    scored = out.filter(pl.col("gain").is_not_nan() & pl.col("gain").is_not_null())
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(records[0]))
+        writer.writeheader()
+        writer.writerows(records)
+    print(f"\nWrote {args.out} ({len(records)} rows)", file=sys.stderr)
+
+    scored = [r for r in records if not np.isnan(r["gain"])]
     if len(scored) >= 3:
         print(f"\nSpearman rho vs. gain (n={len(scored)}):", file=sys.stderr)
-        gains = scored["gain"].to_numpy()
+        gains = np.array([r["gain"] for r in scored])
         for column in ("eval_in_aux_frac", "scaffold_overlap_frac", "nn_tanimoto_mean", "nn_tanimoto_matched_mean", "n_molecules"):
-            values = scored[column].to_numpy().astype(float)
+            values = np.array([float(r[column]) for r in scored])
             ok = ~np.isnan(values)
             if ok.sum() < 3:
                 print(f"  {column:<28} n/a  (fewer than 3 heads)", file=sys.stderr)
-                continue
-            if np.std(values[ok]) == 0:
+            elif np.std(values[ok]) == 0:
                 # Happens at --granularity protein when several heads share one
                 # source table and so cover exactly the same molecules. A rank
                 # correlation against a constant is an artefact, not a result.
                 print(f"  {column:<28} n/a  (constant across heads)", file=sys.stderr)
-                continue
-            ranked_x = np.argsort(np.argsort(values[ok]))
-            ranked_y = np.argsort(np.argsort(gains[ok]))
-            rho = np.corrcoef(ranked_x, ranked_y)[0, 1]
-            print(f"  {column:<28} {rho:+.3f}  (n={ok.sum()})", file=sys.stderr)
+            else:
+                print(f"  {column:<28} {_spearman(values[ok], gains[ok]):+.3f}  (n={ok.sum()})", file=sys.stderr)
 
 
 if __name__ == "__main__":
