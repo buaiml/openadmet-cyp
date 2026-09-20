@@ -1,11 +1,21 @@
 #!/bin/bash -l
-#$ -P your_project_here      # TODO: SCC project allocation (same one head_search.qsub uses)
 #$ -N chemspace
 #$ -j y
 #$ -o chemspace.qlog
 #$ -l h_rt=6:00:00           # fingerprinting ~39k molecules, then PCA + t-SNE + UMAP over them
 #$ -l mem_per_core=8G        # the 39k x 2048 float32 fingerprint matrix plus t-SNE working set
 #$ -pe omp 8                 # CPU only -- no GPU, this trains nothing. t-SNE and UMAP thread.
+
+# No `#$ -P` here on purpose. SGE parses `#$` lines literally -- they never
+# expand environment variables -- so a project baked into the file can only be
+# changed by editing the file, which leaves everyone carrying a dirty working
+# tree. Precedence is instead: ~/.sge_request < `#$` directives < command line,
+# so put the allocation in your own ~/.sge_request once:
+#
+#     echo "-P <your_project>" >> ~/.sge_request
+#
+# and submit with a plain `qsub scripts/chemspace.qsub`. A one-off project
+# overrides it on the command line: `qsub -P <other> scripts/chemspace.qsub`.
 
 set -euo pipefail
 
