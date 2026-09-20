@@ -2,6 +2,7 @@ polars
 huggingface_hub
 rdkit
 scikit-learn
+umap-learn
 numpy
 tqdm
 matplotlib
