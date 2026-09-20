@@ -431,10 +431,23 @@ def embed(
         elif method == "umap":
             try:
                 from umap import UMAP
-            except ImportError:
+            except ImportError as exc:
                 print(
-                    "  umap: umap-learn is not installed -- skipping. "
+                    f"  umap: umap-learn is not importable ({exc}) -- skipping. "
                     "`pip install umap-learn` in the cyp env to include it.",
+                    file=sys.stderr,
+                )
+                continue
+            except Exception as exc:  # pylint: disable=broad-except
+                # umap-learn imports numba, which on a cluster fails in ways
+                # that are not ImportError -- an llvmlite/numpy ABI mismatch, or
+                # a numba cache it cannot write. Those must not take the whole
+                # run down after t-SNE has already been paid for, and they must
+                # not be reported as "not installed", which sends you to
+                # reinstall a package that is already there.
+                print(
+                    f"  umap: umap-learn is installed but failed to import "
+                    f"({type(exc).__name__}: {exc}) -- skipping.",
                     file=sys.stderr,
                 )
                 continue
@@ -734,13 +747,11 @@ def figure_by_gain(
     bar.set_label("Macro RMSE improvement bought by this dataset's head", fontsize=9, color=_INK_SOFT)
     bar.outline.set_edgecolor("#e4e3de")
 
-    handles = [Line2D([], [], marker="o", linestyle="", markersize=5, color=_TEST, label="challenge/test (scored holdout)")]
-    legend = fig.legend(
-        handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.012),
-        ncol=1, fontsize=8.5, frameon=True, labelcolor=_INK_SOFT,
-    )
-    legend.get_frame().set_edgecolor("#e4e3de")
-
+    # No legend box. A colorbar-bearing figure cannot use tight_layout, so
+    # nothing reserves a bottom margin, and a floating legend lands on the
+    # caption at whatever height this grid happens to take. The one non-ramp
+    # colour is named in the caption instead, which keeps identity off colour
+    # alone without an artist that has to be positioned blind.
     fig.suptitle(
         f"{method.upper()} — chemical space coloured by each dataset's contribution",
         fontsize=12, color=_INK,
@@ -748,7 +759,8 @@ def figure_by_gain(
     fig.text(
         0.5, 0.001,
         "Every panel is the same map; only the highlighted dataset changes. Its colour is the RMSE that "
-        "dataset's head bought as a solo addition in head-search (baseline 0.9430). Grey = all molecules."
+        "dataset's head bought as a solo addition in head-search (baseline 0.9430). "
+        "Grey = all molecules; orange = challenge/test, the scored holdout."
         + (f"\n{method.upper()}: {note}" if note else ""),
         ha="center", fontsize=8, color=_INK_SOFT,
     )
