@@ -151,9 +151,10 @@ explanations for the bimodal pattern, not yet tested against the data:
   aux head's molecule set and the challenge train/test molecules.
 - **Protein relatedness between the aux isoform and the scored four.**
   Tested and **ruled out** — see `reports/protein_similarity_analysis.md`.
-  Neither sequence identity nor AlphaFold TM-score predicts gain (rho = -0.00
-  and +0.03 over 20 heads); CYP3A5 (84% identical to CYP3A4) is inert while
-  CYP11B1 (24%) is the best family head.
+  Neither whole-protein identity, fold similarity, nor heme-pocket similarity
+  predicts gain (rho = -0.00, +0.03, +0.13 over 20 heads); CYP3A5 shares 90%
+  of CYP3A4's active-site residues and is inert, while CYP11B1 at 39% is the
+  best family head.
 - **Label quality/consistency.** ChEMBL/BindingDB pulls are heterogeneous
   across labs and assay protocols per target; some targets in the family set
   may have more internally consistent IC50 measurements than others,
@@ -194,9 +195,10 @@ explanations for the bimodal pattern, not yet tested against the data:
   CYP1A2/2C9/2C19/2D6/3A4 aux blocks as largely overlapping; expect
   diminishing or negative returns from combining more than one or two, which
   is exactly what greedy found.
-- **Enzyme similarity is not the lever.** Ruled out on both a sequence and a
-  structure axis (`reports/protein_similarity_analysis.md`). The encoder never
-  sees the protein, so a head's value is a property of its molecules.
+- **Enzyme similarity is not the lever.** Ruled out on four axes, including
+  heme-pocket sequence and shape (`reports/protein_similarity_analysis.md`).
+  The encoder never sees the protein, so a head's value is a property of its
+  molecules.
 - **Open question worth a follow-up run:** compute Tanimoto similarity
   between each aux head's molecules and the challenge molecule set, and
   re-plot solo-head gain against that instead of row count. That would

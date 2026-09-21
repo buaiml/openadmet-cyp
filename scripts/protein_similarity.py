@@ -8,19 +8,39 @@ enzymes -- same fold, same substrate-binding residues, therefore transferable
 structure-activity signal -- then gain should rise with similarity to
 CYP{1A2,2C9,2D6,3A4}.
 
-Two independent similarity axes, because they disagree across the P450 family:
+Four similarity axes, two whole-protein and two restricted to the heme pocket:
 
   sequence    Needleman-Wunsch global alignment (BLOSUM62, -11/-1) of the
               canonical UniProt sequences, percent identity over the shorter
-              sequence. Sensitive to the residue-level differences that set
-              substrate specificity apart within a subfamily.
+              sequence.
   structure   TM-score from TM-align over the AlphaFold DB models. Fold-level,
               length-normalised, and nearly saturated inside P450s -- every
               member shares the same triangular-prism fold, so the dynamic
               range here is small by construction and a flat trend on this
               axis is weaker evidence than a flat trend on sequence.
+  pocket seq  Percent identity over the scored isoform's active-site residues
+              only, read off the TM-align structural correspondence. Whole-
+              protein identity is dominated by the conserved core and the
+              I-helix; what decides whether two P450s turn over the same
+              chemistry is the ~20 residues lining the cavity above the heme,
+              and those are exactly what the two global axes average away.
+  pocket shape  CA RMSD over the same positions after a Kabsch fit on the
+              pocket pairs alone, so it measures cavity geometry rather than
+              whether the two folds superpose (they always do). Lower is more
+              similar, unlike the other three.
 
-Both are measured against each of the four scored isoforms separately, then
+The pocket is defined per scored isoform, not by a sequence motif: a
+ligand-bound crystal structure (CYP1A2 2HI4, CYP2C9 1R9O, CYP2D6 4WNV, CYP3A4
+1TQN) is superposed onto that isoform's AlphaFold model, its heme is carried
+into the model frame, and the pocket is every residue with a heavy atom within
+--pocket-cutoff A of the heme *on the distal side* of the porphyrin plane. The
+distal filter matters: the proximal shell is the cysteine ligand loop, which is
+invariant across the whole superfamily and would flatten the axis by
+construction. On CYP3A4 the default 6 A picks out R105, S119, I120, F302, A305,
+T309, I369, A370, R372, L373, E374 -- the textbook substrate-recognition
+positions -- so the definition is doing what it claims.
+
+All four are measured against each of the four scored isoforms separately, then
 aggregated per aux head as the mean over the four (the metric is a macro
 average over those same four tasks) and as the max (a head could help by being
 close to just one). Self-pairs are excluded from the aggregate: an aux head for
@@ -37,9 +57,9 @@ Usage:
     python scripts/protein_similarity.py
     python scripts/protein_similarity.py --results-path results/head_search_results.csv
 
-Network: UniProt REST (sequences) and AlphaFold DB (structures), both cached
-under --cache-dir, so a second run is offline. Requires biopython and tmtools
-on top of the project requirements.
+Network: UniProt REST (sequences), AlphaFold DB (models) and RCSB (the four
+holo structures), all cached under --cache-dir, so a second run is offline.
+Requires biopython and tmtools on top of the project requirements.
 """
 
 import argparse
@@ -59,7 +79,18 @@ from tmtools import tm_align
 _UNIPROT_SEARCH_URL = "https://rest.uniprot.org/uniprotkb/search"
 _AFDB_PREDICTION_URL = "https://alphafold.ebi.ac.uk/api/prediction"
 _AFDB_FILE_URL = "https://alphafold.ebi.ac.uk/files"
+_RCSB_FILE_URL = "https://files.rcsb.org/download"
 _TIMEOUT_S = 60
+
+# Ligand-bound crystal structure per scored isoform, as (PDB id, chain). Each
+# one is only ever used as a heme donor, so the requirement is a well-resolved
+# HEM in a chain that superposes cleanly on the AlphaFold model.
+_HOLO = {
+    "CYP1A2": ("2HI4", "A"),   # alpha-naphthoflavone
+    "CYP2C9": ("1R9O", "A"),   # flurbiprofen
+    "CYP2D6": ("4WNV", "A"),   # thioridazine
+    "CYP3A4": ("1TQN", "A"),   # ligand-free, heme present
+}
 
 _SCORED = ["CYP1A2", "CYP2C9", "CYP2D6", "CYP3A4"]
 _QHTS = {"CYP1A2", "CYP2C9", "CYP2C19", "CYP2D6", "CYP3A4"}
@@ -75,14 +106,33 @@ _AA3TO1 = {
 
 
 @dataclass
+class Residue:
+    """One modelled residue: its letter, its CA, and all its heavy atoms."""
+
+    letter: str
+    number: int
+    ca: np.ndarray
+    atoms: np.ndarray
+
+
+@dataclass
 class Protein:
-    """One isoform: its UniProt sequence and its AlphaFold CA trace."""
+    """One isoform: its UniProt sequence and its AlphaFold model."""
 
     gene: str
     accession: str
     sequence: str
-    ca_coords: np.ndarray
-    ca_sequence: str
+    residues: list[Residue]
+
+    @property
+    def ca_coords(self) -> np.ndarray:
+        """N x 3 CA trace of the model."""
+        return np.array([r.ca for r in self.residues])
+
+    @property
+    def ca_sequence(self) -> str:
+        """One-letter sequence of the modelled residues, in model order."""
+        return "".join(r.letter for r in self.residues)
 
 
 # --------------------------------------------------------------------------
@@ -145,19 +195,57 @@ def fetch_structure(accession: str, cache_dir: Path) -> Path:
     return path
 
 
-def read_ca_trace(path: Path) -> tuple[np.ndarray, str]:
-    """Return (N x 3 CA coordinates, one-letter sequence) from a single-chain PDB."""
-    coords: list[list[float]] = []
-    residues: list[str] = []
+def fetch_pdb(pdb_id: str, cache_dir: Path) -> Path:
+    """Return a local path to an RCSB entry, downloading once."""
+    path = cache_dir / f"{pdb_id}.pdb"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(_http_get(f"{_RCSB_FILE_URL}/{pdb_id}.pdb"))
+        print(f"  {pdb_id}: RCSB entry", file=sys.stderr)
+    return path
+
+
+def read_residues(path: Path, chain: str | None = None) -> tuple[list[Residue], dict[str, np.ndarray]]:
+    """Return (protein residues, heme atoms) from a PDB file.
+
+    Hydrogens and alternate locations beyond the first are dropped; residues
+    without a CA are dropped, since every downstream step needs one. The heme
+    dictionary is keyed by PDB atom name (FE, NA, NB, ...) and is empty for an
+    AlphaFold model, which has no cofactor.
+    """
+    collected: dict[str, dict] = {}
+    order: list[str] = []
+    heme: dict[str, np.ndarray] = {}
+
     for line in path.read_text().splitlines():
-        if not line.startswith("ATOM") or line[12:16].strip() != "CA":
+        record = line[:6].strip()
+        if record not in ("ATOM", "HETATM") or (chain and line[21] != chain):
             continue
-        resname = line[17:20].strip()
-        if resname not in _AA3TO1:
+        if line[16] not in (" ", "A") or line[76:78].strip() == "H":
             continue
-        coords.append([float(line[30:38]), float(line[38:46]), float(line[46:54])])
-        residues.append(_AA3TO1[resname])
-    return np.array(coords), "".join(residues)
+        name, resname = line[12:16].strip(), line[17:20].strip()
+        xyz = np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+
+        if resname == "HEM":
+            heme.setdefault(name, xyz)
+            continue
+        if record != "ATOM" or resname not in _AA3TO1:
+            continue
+
+        key = line[21] + line[22:27]
+        if key not in collected:
+            collected[key] = {"letter": _AA3TO1[resname], "number": int(line[22:26]), "atoms": [], "ca": None}
+            order.append(key)
+        collected[key]["atoms"].append(xyz)
+        if name == "CA":
+            collected[key]["ca"] = xyz
+
+    residues = [
+        Residue(collected[k]["letter"], collected[k]["number"], collected[k]["ca"], np.array(collected[k]["atoms"]))
+        for k in order
+        if collected[k]["ca"] is not None
+    ]
+    return residues, heme
 
 
 # --------------------------------------------------------------------------
@@ -186,15 +274,98 @@ def sequence_identity(seq_a: str, seq_b: str, aligner: PairwiseAligner) -> float
     return 100.0 * identities / min(len(seq_a), len(seq_b))
 
 
-def tm_score(a: Protein, b: Protein) -> float:
-    """Mean of the two TM-align normalisations between two structures.
+def _kabsch_rmsd(p: np.ndarray, q: np.ndarray) -> float:
+    """RMSD between two equal-length point sets after optimal superposition."""
+    p, q = p - p.mean(0), q - q.mean(0)
+    v, _, wt = np.linalg.svd(p.T @ q)
+    if np.linalg.det(v @ wt) < 0:
+        v[:, -1] *= -1
+    return float(np.sqrt(((p @ (v @ wt) - q) ** 2).sum() / len(p)))
 
-    TM-score is asymmetric (normalised by either chain's length). P450 lengths
-    differ by at most ~15%, so the two values are close; the mean avoids
-    picking a direction and is symmetric, which the plot needs.
+
+def transfer_heme(model: Protein, holo_path: Path, chain: str) -> tuple[dict[str, np.ndarray], float]:
+    """Carry a crystal structure's heme into an AlphaFold model's frame.
+
+    Returns (heme atoms in model coordinates, superposition RMSD). The donor is
+    the same protein as the model, so the fit is a sanity check rather than a
+    free parameter -- a large RMSD here means the wrong chain was picked.
     """
-    result = tm_align(a.ca_coords, b.ca_coords, a.ca_sequence, b.ca_sequence)
-    return 0.5 * (result.tm_norm_chain1 + result.tm_norm_chain2)
+    holo_residues, heme = read_residues(holo_path, chain)
+    if not heme:
+        raise SystemExit(f"{holo_path} chain {chain} has no HEM")
+
+    holo_ca = np.array([r.ca for r in holo_residues])
+    holo_seq = "".join(r.letter for r in holo_residues)
+    result = tm_align(holo_ca, model.ca_coords, holo_seq, model.ca_sequence)
+    rotation, translation = np.array(result.u), np.array(result.t)
+    return {name: rotation @ xyz + translation for name, xyz in heme.items()}, result.rmsd
+
+
+def pocket_indices(model: Protein, heme: dict[str, np.ndarray], cutoff: float) -> list[int]:
+    """Residue indices lining the substrate cavity above the heme.
+
+    Distal side only. The porphyrin plane is fit through the four pyrrole
+    nitrogens and oriented away from the axial cysteine, so the conserved
+    proximal ligand loop -- identical across the superfamily, and therefore
+    pure noise for this question -- is excluded.
+    """
+    iron = heme["FE"]
+    heme_atoms = np.array(list(heme.values()))
+    pyrrole = np.array([heme[n] for n in ("NA", "NB", "NC", "ND")])
+    normal = np.linalg.svd(pyrrole - pyrrole.mean(0))[2][2]
+    normal = normal / np.linalg.norm(normal)
+
+    cysteine_atoms = np.vstack([r.atoms for r in model.residues if r.letter == "C"])
+    axial = cysteine_atoms[np.argmin(np.linalg.norm(cysteine_atoms - iron, axis=1))]
+    if (axial - iron) @ normal > 0:
+        normal = -normal
+
+    indices = []
+    for i, residue in enumerate(model.residues):
+        distal = residue.atoms[(residue.atoms - iron) @ normal > 0]
+        if len(distal) == 0:
+            continue
+        if np.linalg.norm(distal[:, None, :] - heme_atoms[None], axis=2).min() <= cutoff:
+            indices.append(i)
+    return indices
+
+
+def structure_metrics(aux: Protein, scored: Protein, pocket: list[int]) -> dict[str, float]:
+    """TM-score plus pocket identity and pocket CA RMSD for one aux/scored pair.
+
+    One TM-align call serves both: its alignment gives the residue
+    correspondence the pocket metrics are read off, so the pocket comparison
+    inherits a structural alignment rather than a sequence one -- necessary at
+    20-30% identity, where a sequence alignment of the cavity is not reliable.
+    """
+    result = tm_align(aux.ca_coords, scored.ca_coords, aux.ca_sequence, scored.ca_sequence)
+
+    # Walk the gapped alignment to map scored-model index -> aux-model index.
+    partner: dict[int, int] = {}
+    i = j = 0
+    for a, b in zip(result.seqxA, result.seqyA):
+        if a != "-" and b != "-":
+            partner[j] = i
+        i += a != "-"
+        j += b != "-"
+
+    matched = [(k, partner[k]) for k in pocket if k in partner]
+    identical = sum(1 for k, m in matched if scored.residues[k].letter == aux.residues[m].letter)
+    rmsd = (
+        _kabsch_rmsd(
+            np.array([aux.residues[m].ca for _, m in matched]),
+            np.array([scored.residues[k].ca for k, _ in matched]),
+        )
+        if len(matched) >= 3
+        else float("nan")
+    )
+
+    return {
+        "tm": 0.5 * (result.tm_norm_chain1 + result.tm_norm_chain2),
+        "pocket_identity": 100.0 * identical / len(pocket),
+        "pocket_rmsd": rmsd,
+        "pocket_coverage": len(matched) / len(pocket),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -340,31 +511,27 @@ def plot_axis(
 def write_table(
     genes: list[str],
     proteins: dict[str, Protein],
-    identity: dict[str, dict[str, float]],
-    tm: dict[str, dict[str, float]],
+    axes: dict[str, dict[str, dict[str, float]]],
     macro: dict[str, float],
     per_task: dict[str, dict[str, float]],
     out_path: Path,
 ) -> None:
     """Write the per-gene similarity/gain table the figures are drawn from."""
+    names = list(axes)
     header = (
         ["gene", "accession", "tier", "self_aux", "macro_gain"]
         + [f"gain_{t}" for t in _SCORED]
-        + [f"identity_{t}" for t in _SCORED]
-        + [f"tm_{t}" for t in _SCORED]
-        + ["identity_mean", "identity_max", "tm_mean", "tm_max"]
+        + [f"{name}_{t}" for name in names for t in _SCORED]
+        + [f"{name}_{stat}" for name in names for stat in ("mean", "max", "min")]
     )
     lines = [",".join(header)]
     for gene in sorted(genes, key=lambda g: -macro[g]):
-        ident_others = [identity[gene][t] for t in _SCORED if t != gene]
-        tm_others = [tm[gene][t] for t in _SCORED if t != gene]
+        others = {name: [axes[name][gene][t] for t in _SCORED if t != gene] for name in names}
         row = (
             [gene, proteins[gene].accession, "qHTS" if gene in _QHTS else "family", str(gene in _SCORED), f"{macro[gene]:.4f}"]
             + [f"{per_task[gene][t]:.4f}" for t in _SCORED]
-            + [f"{identity[gene][t]:.2f}" for t in _SCORED]
-            + [f"{tm[gene][t]:.4f}" for t in _SCORED]
-            + [f"{np.mean(ident_others):.2f}", f"{max(ident_others):.2f}",
-               f"{np.mean(tm_others):.4f}", f"{max(tm_others):.4f}"]
+            + [f"{axes[name][gene][t]:.3f}" for name in names for t in _SCORED]
+            + [f"{f(others[name]):.3f}" for name in names for f in (np.mean, max, min)]
         )
         lines.append(",".join(row))
 
@@ -374,12 +541,18 @@ def write_table(
 
 
 def main() -> None:
-    """Entry point: fetch proteins, measure both similarities, plot against gain."""
+    """Entry point: fetch proteins, measure all four similarities, plot against gain."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-path", type=Path, default=Path("results/head_search_results.csv"))
     parser.add_argument("--cache-dir", type=Path, default=Path("data/proteins"))
     parser.add_argument("--out-dir", type=Path, default=Path("reports"))
     parser.add_argument("--table-path", type=Path, default=Path("results/protein_similarity.csv"))
+    parser.add_argument(
+        "--pocket-cutoff",
+        type=float,
+        default=6.0,
+        help="A from any heme atom, distal side, for a residue to count as pocket (default 6.0)",
+    )
     args = parser.parse_args()
 
     macro, per_task = load_gains(args.results_path)
@@ -392,27 +565,50 @@ def main() -> None:
     proteins: dict[str, Protein] = {}
     for gene in genes:
         accession, sequence = uniprot[gene]
-        coords, ca_sequence = read_ca_trace(fetch_structure(accession, args.cache_dir))
-        proteins[gene] = Protein(gene, accession, sequence, coords, ca_sequence)
+        residues, _ = read_residues(fetch_structure(accession, args.cache_dir))
+        proteins[gene] = Protein(gene, accession, sequence, residues)
+
+    print(f"Defining heme pockets ({args.pocket_cutoff} A, distal side)", file=sys.stderr)
+    pockets: dict[str, list[int]] = {}
+    for task in _SCORED:
+        pdb_id, chain = _HOLO[task]
+        heme, fit_rmsd = transfer_heme(proteins[task], fetch_pdb(pdb_id, args.cache_dir), chain)
+        pockets[task] = pocket_indices(proteins[task], heme, args.pocket_cutoff)
+        lining = " ".join(
+            f"{proteins[task].residues[i].letter}{proteins[task].residues[i].number}" for i in pockets[task]
+        )
+        print(f"  {task}: {pdb_id} fit {fit_rmsd:.2f} A, {len(pockets[task])} residues: {lining}", file=sys.stderr)
 
     aligner = _aligner()
-    identity: dict[str, dict[str, float]] = {}
-    tm: dict[str, dict[str, float]] = {}
+    axes: dict[str, dict[str, dict[str, float]]] = {
+        "identity": {}, "tm": {}, "pocket_identity": {}, "pocket_rmsd": {}, "pocket_coverage": {}
+    }
     for gene in genes:
-        identity[gene] = {
+        axes["identity"][gene] = {
             task: sequence_identity(proteins[gene].sequence, proteins[task].sequence, aligner)
             for task in _SCORED
         }
-        tm[gene] = {task: tm_score(proteins[gene], proteins[task]) for task in _SCORED}
+        for task in _SCORED:
+            metrics = structure_metrics(proteins[gene], proteins[task], pockets[task])
+            for key in ("tm", "pocket_identity", "pocket_rmsd", "pocket_coverage"):
+                axes[key].setdefault(gene, {})[task] = metrics[key]
         print(
-            f"  {gene}: identity {min(identity[gene].values()):.1f}-{max(identity[gene].values()):.1f}%, "
-            f"TM {min(tm[gene].values()):.3f}-{max(tm[gene].values()):.3f}",
+            f"  {gene}: identity {min(axes['identity'][gene].values()):.1f}-{max(axes['identity'][gene].values()):.1f}%, "
+            f"TM {min(axes['tm'][gene].values()):.3f}-{max(axes['tm'][gene].values()):.3f}, "
+            f"pocket identity {min(axes['pocket_identity'][gene].values()):.0f}-{max(axes['pocket_identity'][gene].values()):.0f}%, "
+            f"pocket RMSD {min(axes['pocket_rmsd'][gene].values()):.2f}-{max(axes['pocket_rmsd'][gene].values()):.2f} A",
             file=sys.stderr,
         )
 
-    write_table(genes, proteins, identity, tm, macro, per_task, args.table_path)
-    plot_axis("sequence", "% identity", identity, macro, per_task, args.out_dir / "similarity_vs_gain_sequence.png")
-    plot_axis("structure", "TM-score", tm, macro, per_task, args.out_dir / "similarity_vs_gain_structure.png")
+    write_table(genes, proteins, axes, macro, per_task, args.table_path)
+    plot_axis("sequence", "% identity", axes["identity"], macro, per_task,
+              args.out_dir / "similarity_vs_gain_sequence.png")
+    plot_axis("structure", "TM-score", axes["tm"], macro, per_task,
+              args.out_dir / "similarity_vs_gain_structure.png")
+    plot_axis("pocket sequence", "% identity", axes["pocket_identity"], macro, per_task,
+              args.out_dir / "similarity_vs_gain_pocket_sequence.png")
+    plot_axis("pocket shape", "CA RMSD, A (lower = more similar)", axes["pocket_rmsd"], macro, per_task,
+              args.out_dir / "similarity_vs_gain_pocket_shape.png")
 
 
 if __name__ == "__main__":
