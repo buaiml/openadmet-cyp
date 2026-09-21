@@ -8,3 +8,5 @@ tqdm
 matplotlib
 torch
 chemprop
+biopython
+tmtools
