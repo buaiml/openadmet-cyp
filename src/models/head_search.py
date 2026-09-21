@@ -104,13 +104,36 @@ def _run_once(
     The model always predicts the scored heads first, so their metrics are
     directly comparable across configurations regardless of what else is
     attached.
+
+    Rows carrying no value in any selected target column are dropped first.
+    They cannot contribute a gradient, and leaving them in is not merely
+    wasteful: chemprop reduces its loss as `total_loss / num_samples` over the
+    *valid* targets in the batch, so a batch in which every row is unlabelled
+    evaluates 0/0 = NaN, the NaN propagates into the weights, and the run
+    finishes reporting whatever checkpoint preceded it. On the 2026-09-14
+    union the no-auxiliary baseline was 10.5% labelled, which put the first
+    empty batch at epoch 1 and made the reported baseline an epoch-0 model.
+    See reports/head_search_baseline_bug.md and
+    scripts/diagnose_null_batches.py.
     """
     with tempfile.TemporaryDirectory(prefix="head_search_") as tmp:
+        targets = list(scored_columns) + list(aux_columns)
+        table = pl.read_csv(data_path, infer_schema_length=None)
+        labelled = table.filter(pl.any_horizontal([pl.col(c).is_not_null() for c in targets]))
+        if len(labelled) < len(table):
+            print(
+                f"    dropped {len(table) - len(labelled)} of {len(table)} rows with no label in "
+                f"any selected target ({len(labelled)} left)",
+                file=sys.stderr,
+            )
+        train_path = Path(tmp) / "train.csv"
+        labelled.write_csv(train_path)
+
         cmd = [
             "chemprop",
             "train",
             "--data-path",
-            str(data_path),
+            str(train_path),
             "--smiles-columns",
             "SMILES",
             "--target-columns",
@@ -119,7 +142,7 @@ def _run_once(
             "--task-type",
             "regression",
             "--output-dir",
-            tmp,
+            str(Path(tmp) / "run"),
             "--epochs",
             str(epochs),
             "--pytorch-seed",

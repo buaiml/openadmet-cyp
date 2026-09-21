@@ -1,5 +1,14 @@
 # Auxiliary Head Analysis: Which Isoforms Help the CYP Challenge
 
+> **RETRACTED 2026-09-21.** Every number below is unsafe. The baseline this
+> report compares against (macro RMSE 0.9430) is a model whose loss went NaN at
+> epoch 1 and that was scored from its epoch-0 checkpoint, and the same failure
+> hit most of the low-gain configurations. What the search measured is which
+> runs survived training, not which auxiliary heads transfer. Measured properly,
+> the round-1 pick (CYP1A2) is worth +0.037, not the +0.212 reported here. Root
+> cause, proof and fix: `reports/head_search_baseline_bug.md`. Re-run the search
+> with the fixed `head-search` before citing anything here.
+
 Source data: `results/data_counts.csv` (example counts per isoform/source) and
 `results/head_search_results.csv` (greedy head-search macro RMSE per config),
 from the BU SCC run on 2026-09-14.

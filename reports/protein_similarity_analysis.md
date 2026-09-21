@@ -12,6 +12,12 @@ UniProt/AlphaFold/RCSB cache warm, ~2 min cold). Sequences from UniProt
 Gains are the solo-head rows of `results/head_search_results.csv` (baseline
 0.9430 ± 0.0018). Per-gene table: `results/protein_similarity.csv`.
 
+> **Caveat added 2026-09-21.** The gains this report regresses against are
+> invalid — see `reports/head_search_baseline_bug.md`. The conclusion (protein
+> similarity does not explain the gains) is unchanged in direction, since the
+> gains turn out to encode training survival rather than transfer, but the
+> analysis should be re-run once real gains exist.
+
 ## TL;DR
 
 **No.** Nothing about the enzyme predicts gain — not whole-protein sequence
