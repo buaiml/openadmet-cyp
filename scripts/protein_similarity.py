@@ -1,7 +1,8 @@
 """Test whether protein similarity between isoforms explains auxiliary-head gain.
 
-`reports/head_search_analysis.md` left the split unexplained: some aux heads buy
-~0.2 macro RMSE and others buy nothing, and row count does not predict which.
+`reports/head_search_analysis.md` leaves the ranking unexplained: some aux heads
+buy a measurable macro RMSE gain and others buy nothing, and row count does not
+predict which.
 `chemspace.py` attacks the ligand side of that question. This one attacks the
 protein side: if an aux head helps because its enzyme is *like* the scored
 enzymes -- same fold, same substrate-binding residues, therefore transferable
@@ -49,13 +50,14 @@ experiment design, not about transfer. Those four heads are drawn as stars, as
 in `plot_volume_vs_gain.py`, and are confounded anyway -- they carry a
 supervision channel no external head has.
 
-Gains are read from `results/head_search_results.csv`: solo-head configs only
-(a multi-head config measures a set, not a head), `baseline - config`, so
-positive means the head helped. Per-task gains come from the same rows.
+Gains are read from the head-search JSON (`results/head_search.json`): solo-head
+configs only (a multi-head config measures a set, not a head),
+`baseline - config`, so positive means the head helped. Per-task gains come
+from the same entries.
 
 Usage:
     python scripts/protein_similarity.py
-    python scripts/protein_similarity.py --results-path results/head_search_results.csv
+    python scripts/protein_similarity.py --results-path results/head_search.json
 
 Network: UniProt REST (sequences), AlphaFold DB (models) and RCSB (the four
 holo structures), all cached under --cache-dir, so a second run is offline.
@@ -379,30 +381,29 @@ def load_gains(results_path: Path) -> tuple[dict[str, float], dict[str, dict[str
     Solo configs only. Gain is `baseline - config`, so positive means the head
     helped.
     """
-    rows = [line.split(",") for line in results_path.read_text().strip().splitlines()]
-    header, body = rows[0], rows[1:]
-    index = {name: i for i, name in enumerate(header)}
+    entries = json.loads(results_path.read_text())
 
-    baseline = next((r for r in body if r[0] == "baseline"), None)
+    baseline = next((e for e in entries if not e["candidates"]), None)
     if baseline is None:
-        raise SystemExit(f"{results_path} has no 'baseline' config row")
+        raise SystemExit(f"{results_path} has no baseline entry (one with an empty 'candidates')")
 
+    base_heads = baseline.get("per_head_rmse_mean", {})
     macro: dict[str, float] = {}
     per_task: dict[str, dict[str, float]] = {}
-    for row in body:
-        config = row[0]
-        if config == "baseline" or "+" in config:
+    for entry in entries:
+        if len(entry["candidates"]) != 1:
             continue
-        macro[config] = float(baseline[index["macroRMSE"]]) - float(row[index["macroRMSE"]])
-        per_task[config] = {
-            task: float(baseline[index[task]]) - float(row[index[task]])
+        gene = entry["candidates"][0]
+        solo_heads = entry.get("per_head_rmse_mean", {})
+        macro[gene] = baseline["macro_rmse_mean"] - entry["macro_rmse_mean"]
+        per_task[gene] = {
+            task: base_heads[f"{task}_pIC50_direct_inhibition"] - solo_heads[f"{task}_pIC50_direct_inhibition"]
             for task in _SCORED
-            if task in index
+            if f"{task}_pIC50_direct_inhibition" in base_heads and f"{task}_pIC50_direct_inhibition" in solo_heads
         }
 
     print(
-        f"{results_path}: baseline macro RMSE {float(baseline[index['macroRMSE']]):.4f}, "
-        f"{len(macro)} solo heads",
+        f"{results_path}: baseline macro RMSE {baseline['macro_rmse_mean']:.4f}, {len(macro)} solo heads",
         file=sys.stderr,
     )
     return macro, per_task
@@ -476,7 +477,7 @@ def plot_axis(
 
     ax_macro.axhline(0, color="#999999", linewidth=0.8, zorder=1)
     ax_macro.set_xlabel(f"Mean {axis_name} similarity to the four scored isoforms ({unit})")
-    ax_macro.set_ylabel("Macro RMSE improvement over baseline (0.9430)")
+    ax_macro.set_ylabel("Macro RMSE improvement over no-aux baseline")
     ax_macro.set_title(f"Solo aux-head gain vs. {axis_name} similarity")
     handles, labels = ax_macro.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
@@ -543,7 +544,7 @@ def write_table(
 def main() -> None:
     """Entry point: fetch proteins, measure all four similarities, plot against gain."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results-path", type=Path, default=Path("results/head_search_results.csv"))
+    parser.add_argument("--results-path", type=Path, default=Path("results/head_search.json"))
     parser.add_argument("--cache-dir", type=Path, default=Path("data/proteins"))
     parser.add_argument("--out-dir", type=Path, default=Path("reports"))
     parser.add_argument("--table-path", type=Path, default=Path("results/protein_similarity.csv"))
