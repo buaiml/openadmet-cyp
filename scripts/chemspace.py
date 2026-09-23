@@ -1,11 +1,10 @@
 """Project every dataset in the union onto a shared chemical-space map.
 
-The question this answers is the one `aux_similarity.py` could not close. That
-analysis ruled out the two obvious explanations for why some auxiliary heads
-buy ~0.2 macro RMSE and others buy nothing: row count does not predict gain,
-and neither does nearest-neighbour Tanimoto to the eval set (every useful head
-sits *further* from the eval molecules than the baseline's own training
-molecules already did). Both are scalar summaries. This one draws the map
+The question this answers is the one `aux_similarity.py` can only summarise:
+why some auxiliary heads buy a measurable macro RMSE gain and others buy
+nothing. Row count and nearest-neighbour Tanimoto to the eval set are scalar
+summaries (and every head sits *further* from the eval molecules than the
+baseline's own training molecules already did). This one draws the map
 instead, so the shape of each dataset -- and where the challenge molecules
 fall inside it -- is visible rather than averaged away.
 
@@ -67,6 +66,10 @@ Usage (SCC):
         --results-path results/head_search.json \
         --out-dir reports \
         --methods pca tsne umap
+
+After a head-search re-run, redraw only the gain figures from the saved dump:
+    python scripts/chemspace.py --from-embedding results/chemspace_embedding.csv \
+        --results-path results/head_search.json --gain-metric per-head
 """
 
 import argparse
@@ -116,6 +119,13 @@ _NON_LABEL_COLUMNS = {"SMILES", "inchikey_block", "inchikey_full", "split", "PUB
 # Source token (the trailing part of `{protein}_{readout}_{source}`) that marks
 # a column as coming from the PubChem qHTS panel rather than a family head.
 _QHTS_SOURCE = "aid1851"
+
+# Caption notes for projections whose caveat does not depend on the data. PCA's
+# does (how much variance two components hold) and is written in embed().
+_NOTES = {
+    "tsne": "local structure only — cluster sizes and between-cluster distances are not meaningful",
+    "umap": "local structure preferred over global — between-cluster distances are only weakly meaningful",
+}
 
 _CHALLENGE_GROUPS = ["challenge/train", "challenge/val", "challenge/test", "challenge/blind"]
 
@@ -420,7 +430,7 @@ def embed(
             from sklearn.manifold import TSNE
 
             print(f"  tsne on {reduced.shape[0]} molecules (this is the slow one)...", file=sys.stderr)
-            notes["tsne"] = "local structure only — cluster sizes and between-cluster distances are not meaningful"
+            notes["tsne"] = _NOTES["tsne"]
             out["tsne"] = TSNE(
                 n_components=2,
                 init="pca",
@@ -452,7 +462,7 @@ def embed(
                 )
                 continue
             print(f"  umap on {reduced.shape[0]} molecules...", file=sys.stderr)
-            notes["umap"] = "local structure preferred over global — between-cluster distances are only weakly meaningful"
+            notes["umap"] = _NOTES["umap"]
             out["umap"] = UMAP(n_components=2, random_state=seed).fit_transform(reduced)
 
         elif method == "mds":
@@ -759,7 +769,7 @@ def figure_by_gain(
     fig.text(
         0.5, 0.001,
         "Every panel is the same map; only the highlighted dataset changes. Its colour is the RMSE that "
-        "dataset's head bought as a solo addition in head-search (baseline 0.9430). "
+        "dataset's head bought as a solo addition in head-search, over the no-aux baseline. "
         "Grey = all molecules; orange = challenge/test, the scored holdout."
         + (f"\n{method.upper()}: {note}" if note else ""),
         ha="center", fontsize=8, color=_INK_SOFT,
@@ -871,6 +881,24 @@ def write_embedding(
     print(f"Wrote {out_path} ({len(smiles)} molecules)", file=sys.stderr)
 
 
+def read_embedding(path: Path) -> tuple[list[str], dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Inverse of write_embedding: (smiles, {group: mask}, {method: (n, 2) coordinates})."""
+    _, columns = read_table(path)
+    smiles = columns["SMILES"]
+    memberships = [set(g for g in groups.split(";") if g) for groups in columns["groups"]]
+
+    groups = sorted(set().union(*memberships))
+    masks = {g: np.array([g in m for m in memberships]) for g in groups}
+
+    methods = [c[: -len("_x")] for c in columns if c.endswith("_x")]
+    coords = {
+        m: np.column_stack([np.asarray(columns[f"{m}_x"], dtype=float), np.asarray(columns[f"{m}_y"], dtype=float)])
+        for m in methods
+    }
+    print(f"{path}: {len(smiles)} molecules, {len(groups)} datasets, projections {methods}", file=sys.stderr)
+    return smiles, masks, coords
+
+
 def main() -> None:
     """Entry point: project every dataset onto one map and draw both colourings."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -914,10 +942,25 @@ def main() -> None:
         "molecules are always kept; only the auxiliary decks are thinned.",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--from-embedding",
+        type=Path,
+        help="Redraw the gain-dependent figures from a saved --embedding-out dump instead of re-projecting. "
+        "Use after a head-search re-run: no union, fingerprints or t-SNE needed. The overview is gain-free "
+        "and is left alone.",
+    )
     args = parser.parse_args()
 
-    smiles, masks, _ = collect_molecules(args.data_path, args.test_path, args.scored_columns)
     macro_gains, per_head_gains = load_gains(args.results_path, args.scored_columns)
+
+    if args.from_embedding:
+        _, masks, coords_by_method = read_embedding(args.from_embedding)
+        notes = {m: _NOTES.get(m, "") for m in coords_by_method}
+        notes["pca"] = "read relative position, not distance"
+        draw_gain_figures(args, coords_by_method, masks, notes, macro_gains, per_head_gains)
+        return
+
+    smiles, masks, _ = collect_molecules(args.data_path, args.test_path, args.scored_columns)
 
     unmatched = sorted({g.split("/", 1)[1] for g in masks if g not in _CHALLENGE_GROUPS} - set(macro_gains))
     if unmatched:
@@ -954,6 +997,24 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     figure_overview(coords_by_method, masks, notes, args.out_dir / "chemspace_overview.png")
+    draw_gain_figures(args, coords_by_method, masks, notes, macro_gains, per_head_gains)
+
+    # Path("") is Path("."), which is truthy and a directory -- an empty value
+    # has to be checked as a string or the dump tries to write over the cwd.
+    if str(args.embedding_out) not in ("", "."):
+        write_embedding(args.embedding_out, smiles, masks, coords_by_method)
+
+
+def draw_gain_figures(
+    args: argparse.Namespace,
+    coords_by_method: dict[str, np.ndarray],
+    masks: dict[str, np.ndarray],
+    notes: dict[str, str],
+    macro_gains: dict[str, float],
+    per_head_gains: dict[str, dict[str, float]],
+) -> None:
+    """Draw every figure that depends on head-search gains, one set per projection."""
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     for method, coords in coords_by_method.items():
         figure_by_isoform(
             method, coords, masks, macro_gains,
@@ -968,11 +1029,6 @@ def main() -> None:
                 method, coords, masks, per_head_gains, args.scored_columns,
                 args.gain_aggregate, args.out_dir / f"chemspace_gain_perhead_{method}.png",
             )
-
-    # Path("") is Path("."), which is truthy and a directory -- an empty value
-    # has to be checked as a string or the dump tries to write over the cwd.
-    if str(args.embedding_out) not in ("", "."):
-        write_embedding(args.embedding_out, smiles, masks, coords_by_method)
 
 
 if __name__ == "__main__":
