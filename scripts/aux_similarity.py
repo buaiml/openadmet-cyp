@@ -1,7 +1,7 @@
 """Measure how close each auxiliary head's molecules sit to the evaluation set.
 
-The question this answers: head-search says one aux head is worth ~0.21 macro
-RMSE. Is that transfer, or is the aux data just carrying molecules that look
+The question this answers: head-search says some aux heads improve macro
+RMSE (CYP1A2 by ~0.036 in the fixed 2026-09-22 run). Is that transfer, or is the aux data just carrying molecules that look
 like the held-out molecules the RMSE is scored on?
 
 head-search trains via `chemprop --splits-column split`, which is a *row-wise*
@@ -50,6 +50,13 @@ Usage (SCC):
         --data-path data/union_train.csv \
         --results-path results/head_search.json \
         --out results/aux_similarity.csv
+
+The proximity columns depend only on the union and its split; the gain columns
+depend only on head-search. When head-search is re-run on the same union,
+`--refresh-gains` re-joins the new gains onto an existing --out table without
+the union or rdkit:
+    python scripts/aux_similarity.py --refresh-gains \
+        --results-path results/head_search.json --out results/aux_similarity.csv
 """
 
 import argparse
@@ -261,7 +268,16 @@ def main() -> None:
     )
     parser.add_argument("--match-repeats", type=int, default=5, help="Subsample repeats for --match-n")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--refresh-gains",
+        action="store_true",
+        help="Only re-join gains from --results-path onto the existing --out table (no union, no rdkit)",
+    )
     args = parser.parse_args()
+
+    if args.refresh_gains:
+        refresh_gains(args.out, args.results_path)
+        return
 
     header, columns = read_table(args.data_path)
     if "split" not in columns:
@@ -380,19 +396,53 @@ def main() -> None:
             file=sys.stderr,
         )
 
+    write_records(records, args.out)
+    report_correlations(records)
+
+
+def write_records(records: list[dict], out: Path) -> None:
+    """Sort by gain, best first (heads without one last), and write the table."""
     records.sort(key=lambda r: (np.isnan(r["gain"]), -r["gain"] if not np.isnan(r["gain"]) else 0.0))
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w", newline="") as handle:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(records[0]))
         writer.writeheader()
         writer.writerows(records)
-    print(f"\nWrote {args.out} ({len(records)} rows)", file=sys.stderr)
+    print(f"\nWrote {out} ({len(records)} rows)", file=sys.stderr)
 
-    scored = [r for r in records if not np.isnan(r["gain"])]
+
+def refresh_gains(out: Path, results_path: Path) -> None:
+    """Replace the gain columns of an existing table with those of a new head-search run."""
+    _, columns = read_table(out)
+    names = columns["name"]
+    baseline_rmse, solo_rmse = load_gains(results_path)
+
+    unmatched = sorted(set(solo_rmse) - set(names))
+    if unmatched:
+        print(f"WARNING: in head-search but not in {out}: {unmatched}", file=sys.stderr)
+
+    records: list[dict] = []
+    for i, name in enumerate(names):
+        record: dict = {key: values[i] for key, values in columns.items()}
+        if name in solo_rmse:
+            record["solo_macro_rmse"] = solo_rmse[name]
+            record["gain"] = baseline_rmse - solo_rmse[name]
+        else:
+            record["solo_macro_rmse"] = float("nan")
+            record["gain"] = float("nan")
+        records.append(record)
+
+    write_records(records, out)
+    report_correlations(records)
+
+
+def report_correlations(records: list[dict]) -> None:
+    """Print Spearman rho of each proximity column against gain."""
+    scored = [r for r in records if not np.isnan(float(r["gain"]))]
     if len(scored) >= 3:
         print(f"\nSpearman rho vs. gain (n={len(scored)}):", file=sys.stderr)
-        gains = np.array([r["gain"] for r in scored])
+        gains = np.array([float(r["gain"]) for r in scored])
         for column in ("eval_in_aux_frac", "scaffold_overlap_frac", "nn_tanimoto_mean", "nn_tanimoto_matched_mean", "n_molecules"):
             values = np.array([float(r[column]) for r in scored])
             ok = ~np.isnan(values)

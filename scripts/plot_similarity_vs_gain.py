@@ -105,6 +105,7 @@ def main() -> None:
             )
 
         ax.axhline(0, color="#999999", linewidth=0.8, zorder=1)
+        ax.margins(x=0.15)  # room for the point labels on the right edge
         ax.set_xlabel(label, fontsize=9)
         ax.grid(True, alpha=0.25, zorder=0)
 
