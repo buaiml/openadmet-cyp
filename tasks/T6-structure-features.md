@@ -104,8 +104,13 @@ Concretely:
 
 ## Done when
 
-- Solo-feature gain measured against the 0.9430 baseline over ≥3 seeds, split
-  by confidence tier and completion status.
+- Solo-feature gain measured on a **plain no-aux chemprop run** (no aux
+  heads), against baseline `0.7557 ± 0.0036` (`tasks/MANIFEST.md`), over ≥3
+  seeds, split by confidence tier and completion status. If structure
+  features are later stacked with an aux-head config (e.g. CYP1A2, the
+  current best solo head), report that gain separately against *that*
+  config's own score — not against the no-aux baseline, which would
+  double-count the aux head's known contribution.
 - Compared head-to-head across T5's three methods — a feature set that only
   works on docked poses and not co-folded ones is a finding worth reporting,
   and it decides where the remaining GPU budget goes.

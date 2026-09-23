@@ -75,7 +75,8 @@ Any PR claiming an improvement must state, in the PR description:
 - **At least 3 seeds**, with the spread. A gain under ~0.004 is seed noise and is
   not a result.
 - The baseline you are comparing against, by name
-  (currently: no-aux `0.9430 ± 0.0018`, best `CYP1A2+CYP2C8` `0.7184 ± 0.0038`).
+  (currently: no-aux `0.7557 ± 0.0036`, best `CYP1A2` `0.7193 ± 0.0065`, from the
+  fixed 2026-09-22 head-search run).
 
 Paste the actual command you ran. A negative or null result is a perfectly good
 PR — write it up in `reports/` and say so.

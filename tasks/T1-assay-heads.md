@@ -101,7 +101,7 @@ a real decision about shape, not a pivot.
 ## Done when
 
 - The new heads are in a union table and `head-search --strategy single` has
-  scored each block against the 0.9430 baseline over ≥3 seeds.
+  scored each block against the current no-aux baseline (`tasks/MANIFEST.md`) over ≥3 seeds.
 - Single-concentration variants (a) and (b) have been compared head to head.
 - Results appended to `reports/head_search_analysis.md` in the existing table
   format, with the seed spread reported.

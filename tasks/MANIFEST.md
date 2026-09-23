@@ -41,12 +41,15 @@ everything else is bounded work and that one is not.
 
 | Reference point | Macro RMSE |
 |---|---|
-| No auxiliary heads (baseline) | **0.9430 ± 0.0018** |
-| Current best (`CYP1A2+CYP2C8`) | **0.7184 ± 0.0038** |
+| No auxiliary heads (baseline) | **0.7557 ± 0.0036** |
+| Current best (`CYP1A2`) | **0.7193 ± 0.0065** |
 
 **A gain under ~0.004 is seed noise.** Report at least 3 seeds and their spread.
 A single-seed improvement is not a result. See `reports/head_search_analysis.md`
-for the full 55-config table these numbers come from.
+for the full 40-config table these numbers come from (fixed head-search run,
+2026-09-22, `results/head_search.json`). The earlier 0.9430 / 0.7184 pair came
+from a run whose baseline died at epoch 1 — see
+`reports/head_search_baseline_bug.md` — and must not be compared against.
 
 **Never re-split.** Use the pinned `split` column produced by `add-split-column`.
 Re-splitting per experiment makes split noise the dominant term and renders the
