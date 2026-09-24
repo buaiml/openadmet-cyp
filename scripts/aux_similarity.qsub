@@ -1,0 +1,39 @@
+#!/bin/bash -l
+#$ -P your_project_here      # TODO: SCC project allocation (same one head_search.qsub uses)
+#$ -N aux_similarity
+#$ -j y
+#$ -o aux_similarity.qlog
+#$ -l h_rt=2:00:00           # fingerprinting ~21k molecules + ~20 heads x 490 eval NN searches
+#$ -pe omp 4                 # CPU only -- no GPU, this trains nothing
+
+set -euo pipefail
+
+# Keep caches off $HOME: it is over quota on the SCC, and matplotlib only warns
+# about a failed font cache write before falling back to a slow rebuild.
+export MPLCONFIGDIR="${TMPDIR:-/tmp}/mpl-cache"
+mkdir -p "$MPLCONFIGDIR"
+
+module load miniconda
+
+# Activation must be fatal. Without `set -e` plus this check a missing env
+# leaves the job running in base conda, where the packaged polars is built for
+# CPU features these nodes lack and every script dies with SIGILL -- a
+# confusing crash several steps removed from the actual cause.
+CONDA_ENV="${CONDA_ENV:-cyp}"
+if ! conda activate "$CONDA_ENV" 2>/dev/null; then
+    echo "Could not activate conda env '$CONDA_ENV'." >&2
+    echo "Set CONDA_ENV to the env head_search.qsub uses. Available:" >&2
+    conda info --envs >&2
+    exit 1
+fi
+
+cd "$SGE_O_WORKDIR"
+
+python scripts/aux_similarity.py \
+    --data-path data/union_train.csv \
+    --results-path results/head_search.json \
+    --out results/aux_similarity.csv
+
+python scripts/plot_similarity_vs_gain.py \
+    --in results/aux_similarity.csv \
+    --out reports/similarity_vs_gain.png
