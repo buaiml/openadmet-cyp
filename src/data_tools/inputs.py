@@ -8,10 +8,12 @@ import polars as pl
 
 from representations.chemeleon import CheMeleon
 from representations.rdkit_descriptors import RDKitDescriptors
+from representations.morgan import CountMorganFingerprint, MorganFingerprint
 
 _rdkit = RDKitDescriptors()
 _chemeleon = CheMeleon()
-
+_morgan = MorganFingerprint()
+_count_morgan = CountMorganFingerprint()
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
     return _rdkit.transform(df["SMILES"])
@@ -20,10 +22,18 @@ def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
 def _chemeleon_features(df: pl.DataFrame) -> np.ndarray:
     return _chemeleon.transform(df["SMILES"])
 
+def _morgan_features(df: pl.DataFrame) -> np.ndarray:
+    return _morgan.transform(df["SMILES"])
+
+def _count_morgan_features(df: pl.DataFrame) -> np.ndarray:
+    return _count_morgan.transform(df["SMILES"])
+
 
 INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _rdkit.name: _rdkit_features,
     _chemeleon.name: _chemeleon_features,
+    _morgan.name: _morgan_features,
+    _count_morgan.name: _count_morgan_features,
 }
 
 
