@@ -15,9 +15,16 @@ if TYPE_CHECKING:
 class MordredDescriptors(Representation):
     """All configured 2D descriptors in a fixed calculator-defined order.
 
-    Invalid, null, and blank SMILES produce an all-NaN row. Missing or
-    non-finite descriptor values remain NaN without dropping any columns.
+    Invalid, null, and blank SMILES produce an all-NaN row. For valid molecules,
+    missing/error and string descriptor values are encoded as zero, following
+    DeepChem's Mordred featurizer convention; non-finite numbers also become
+    zero. This encoding does not distinguish missing values from true zeros.
+    Descriptor columns are never dropped or reordered.
     The calculator is loaded on first use and reused for later calls.
+
+    Existing NaN-valued feature caches must be rebuilt or a fresh cache used.
+    Reference: https://github.com/deepchem/deepchem/blob/master/deepchem/feat/
+    molecule_featurizers/mordred_descriptors.py
     """
 
     name: ClassVar[str] = "mordred"
@@ -54,7 +61,8 @@ class MordredDescriptors(Representation):
                 continue
             mol = Chem.MolFromSmiles(smi.strip())
             if mol is not None:
-                result = calculator(mol).fill_missing(np.nan)
-                out[i] = np.asarray(list(result), dtype=np.float64)
-        out[~np.isfinite(out)] = np.nan
+                result = calculator(mol).fill_missing(0.0)
+                row = np.asarray([0.0 if isinstance(value, str) else value for value in result], dtype=np.float64)
+                row[~np.isfinite(row)] = 0.0
+                out[i] = row
         return out
