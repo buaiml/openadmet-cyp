@@ -8,7 +8,7 @@ These are descriptive results from one random split at seed 42. The workbook doe
 
 ## Source and metric
 
-The source is the supplied `CompBio T2-representations.xlsx` workbook: `Ind. runs` (solo metrics), `Combinations` and `Summary` (two-input metrics), and `Pairwise Spearman Correlation` (correlations). The workbook's chart captions identify a decision tree, random split, and seed 42. No prior locally generated results are used in this report.
+The source is the supplied `CompBio T2-representations.xlsx` workbook (done by Tony): `Ind. runs` (solo metrics), `Combinations` and `Summary` (two-input metrics), and `Pairwise Spearman Correlation` (correlations). The workbook's chart captions identify a decision tree, random split, and seed 42. No prior locally generated results are used in this report.
 
 The primary metric is **macro RMSE**, the unweighted average of validation RMSE for CYP1A2, CYP2C9, CYP2D6, and CYP3A4 direct inhibition. Lower is better. The workbook also records MAE and R² by isoform; the tables below focus on the Task 2 comparison metric. A positive change in macro RMSE below means the pair scored lower than the stated solo comparator on this one run.
 
