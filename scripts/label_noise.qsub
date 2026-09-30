@@ -1,0 +1,29 @@
+#!/bin/bash -l
+#$ -P your_project_here      # TODO: SCC project allocation (same one head_search.qsub uses)
+#$ -N label_noise
+#$ -j y
+#$ -o label_noise.qlog
+#$ -l h_rt=1:00:00           # ~1 min per 100k records: keying every family and AID 1851 SMILES with rdkit
+#$ -pe omp 1                 # CPU only -- no GPU, this trains nothing
+
+set -euo pipefail
+
+module load miniconda
+
+CONDA_ENV="${CONDA_ENV:-cyp}"
+if ! conda activate "$CONDA_ENV" 2>/dev/null; then
+    echo "Could not activate conda env '$CONDA_ENV'." >&2
+    conda info --envs >&2
+    exit 1
+fi
+
+cd "$SGE_O_WORKDIR"
+
+python scripts/label_noise.py \
+    --families-dir data/families \
+    --pubchem-raw data/pubchem_aid1851_raw.csv \
+    --data-path data/union_train.csv \
+    --results-path results/head_search.json \
+    --similarity-path results/aux_similarity.csv \
+    --out results/label_noise.csv \
+    --columns-out results/label_noise_columns.csv

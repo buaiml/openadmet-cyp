@@ -10,3 +10,4 @@ torch
 chemprop
 biopython
 tmtools
+scipy

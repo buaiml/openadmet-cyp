@@ -1,0 +1,31 @@
+#!/bin/bash -l
+#$ -P your_project_here      # TODO: SCC project allocation (same one head_search.qsub uses)
+#$ -N noise_injection
+#$ -j y
+#$ -o noise_injection.qlog
+#$ -l h_rt=24:00:00          # default plan: baseline + 2 candidates x 5 levels = 11 configs x 3 seeds = 33 runs
+#$ -l gpus=1
+#$ -l gpu_c=7.0               # min compute capability -- KEEP this; see head_search.qsub
+#$ -pe omp 4                 # CPU cores for featurization/dataloading alongside the GPU
+
+set -euo pipefail
+
+module load miniconda
+
+# Activation must be fatal: base conda's polars dies with SIGILL on these nodes
+# (see aux_similarity.qsub), and this script imports models.head_search.
+CONDA_ENV="${CONDA_ENV:-cyp}"
+if ! conda activate "$CONDA_ENV" 2>/dev/null; then
+    echo "Could not activate conda env '$CONDA_ENV'." >&2
+    conda info --envs >&2
+    exit 1
+fi
+
+cd "$SGE_O_WORKDIR"
+
+# Anything passed to qsub after the script name is appended, e.g.
+#   qsub scripts/noise_injection.qsub --candidates CYP1A2 --sigmas 0 0.5 1.0
+python scripts/noise_injection.py \
+    --data-path data/union_train.csv \
+    --results-path results/noise_injection.json \
+    "$@"
