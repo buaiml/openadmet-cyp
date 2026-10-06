@@ -1,7 +1,7 @@
 """Ridge regressor for the CYP challenge."""
 
 from typing import ClassVar
-
+                                                                                                
 import numpy as np
 from sklearn.linear_model import Ridge as RidgeRegressor
 from sklearn.pipeline import Pipeline
@@ -34,3 +34,4 @@ class Ridge(CYPModel):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self._model.predict(X)
+    
