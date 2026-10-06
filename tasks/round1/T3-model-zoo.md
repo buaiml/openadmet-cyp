@@ -98,7 +98,7 @@ done.
   PCA-200 step exists to stay inside them.
 - `scikit-learn` — already present. `Ridge`, `RandomForestRegressor`, `PCA`,
   `StandardScaler`.
-- `evaluate-models --model <name> --input chemeleon` for benchmarking.
+- `evaluate-models --models <name> --input chemeleon` for benchmarking.
 
 ## Done when
 
