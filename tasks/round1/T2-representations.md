@@ -4,6 +4,9 @@
 **GPU:** no. CPU-only, laptop-friendly.
 **Owns:** `src/representations/morgan.py`, `maccs.py`, `mordred.py` (all new);
 one line each in `src/data_tools/inputs.py`.
+**Status:** done. `morgan`, `count_morgan`, `maccs` and `mordred` are registered;
+results are in `reports/t2_solo_representations.md`. The text below is the
+original brief and describes the repo as it was before this task landed.
 
 ---
 
