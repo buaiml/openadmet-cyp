@@ -11,7 +11,7 @@
 #$ -pe omp 4                 # CPU cores for featurization/dataloading alongside the GPU
 
 module load miniconda
-conda activate openadmet-cyp   # TODO: adjust to whatever env/venv this repo was installed into
+conda activate cyp
 
 cd "$SGE_O_WORKDIR"
 bash scripts/run_head_search.sh
