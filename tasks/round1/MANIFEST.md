@@ -14,7 +14,7 @@ methods from the sibling PXR challenge) and `reports/head_search_analysis.md`
 
 - [ ] **[T1 — Wire the unused challenge assays into the union](T1-assay-heads.md)**
       TDI, Emax and single-concentration are on disk and reach nothing. *No deps.*
-- [ ] **[T2 — Representation portfolio](T2-representations.md)**
+- [x] **[T2 — Representation portfolio](T2-representations.md)**
       Morgan/ECFP4, MACCS, Mordred. We currently have two featurizers. *No deps.*
 - [ ] **[T3 — Model zoo](T3-model-zoo.md)**
       LightGBM/XGBoost/Ridge/TabPFN. The registry contains one decision tree. *No deps.*
