@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 from rdkit import Chem
 from rdkit.Chem import MACCSkeys
+from tqdm import tqdm
 
 from representations.base import Representation
 
@@ -28,7 +29,7 @@ class MACCS(Representation):
     def transform(self, smiles: pl.Series) -> np.ndarray:
         """Return a (n_molecules, 167) float64 matrix in input row order."""
         out = np.full((len(smiles), _N_FEATURES), np.nan, dtype=np.float64)
-        for i, smi in enumerate(smiles.to_list()):
+        for i, smi in enumerate(tqdm(smiles.to_list(), desc="MACCS keys", unit="mol", leave=True)):
             if smi is None or not smi.strip():
                 continue
             mol = Chem.MolFromSmiles(smi.strip())

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 import polars as pl
 from rdkit import Chem
+from tqdm import tqdm
 
 from representations.base import Representation
 
@@ -56,7 +57,7 @@ class MordredDescriptors(Representation):
         """Return a (n_molecules, n_descriptors) float64 matrix in input order."""
         calculator = self._get_calculator()
         out = np.full((len(smiles), len(calculator.descriptors)), np.nan, dtype=np.float64)
-        for i, smi in enumerate(smiles.to_list()):
+        for i, smi in enumerate(tqdm(smiles.to_list(), desc="Mordred descriptors", unit="mol", leave=True)):
             if smi is None or not smi.strip():
                 continue
             mol = Chem.MolFromSmiles(smi.strip())

@@ -27,8 +27,10 @@ def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
 def _chemeleon_features(df: pl.DataFrame) -> np.ndarray:
     return _chemeleon.transform(df["SMILES"])
 
+
 def _morgan_features(df: pl.DataFrame) -> np.ndarray:
     return _morgan.transform(df["SMILES"])
+
 
 def _count_morgan_features(df: pl.DataFrame) -> np.ndarray:
     return _count_morgan.transform(df["SMILES"])
