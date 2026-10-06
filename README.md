@@ -96,6 +96,7 @@ names below; several names are hstacked into one feature matrix.
 ```bash
 evaluate-models --input morgan                          # one representation
 evaluate-models --input count_morgan rdkit --split butina --seed 0
+evaluate-models --input all                             # every representation on its own, one table
 ```
 
 Unparsable SMILES give an all-NaN row, which `evaluate-models` drops. Features
