@@ -8,3 +8,6 @@ matplotlib
 torch
 chemprop
 mordredcommunity
+xgboost
+tabpfn
+lightgbm
