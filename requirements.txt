@@ -9,3 +9,4 @@ torch
 chemprop
 xgboost
 tabpfn
+lightgbm

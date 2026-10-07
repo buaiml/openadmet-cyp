@@ -76,6 +76,32 @@ generate-results           # predictions for submission
 build-family-datasets      # ChEMBL + BindingDB affinity data across the P450 family (Pfam PF00067)
 ```
 
+## Models
+
+Registered models accept precomputed feature matrices through `fit(X, y)` and
+`predict(X)`. The evaluator applies `models.utils.drop_nan_rows` before fitting
+and scoring. The three ensemble wrappers do not add filtering, feature generation,
+scaling or PCA. Select models with `evaluate-models --models <name> ...`.
+
+| Name | Estimator | Default settings |
+|---|---|---|
+| `decision_tree` | sklearn DecisionTreeRegressor | depth=5, min split=2, min leaf=1, seed=42 |
+| `ridge` | sklearn StandardScaler + Ridge | alpha=1.0 |
+| `random_forest` | sklearn RandomForestRegressor | 200 trees, unlimited depth, min leaf=1, all features |
+| `lightgbm` | LightGBM LGBMRegressor | 200 trees, rate=0.05, 31 leaves, unlimited depth, min child=20 |
+| `xgboost` | XGBoost XGBRegressor | 200 trees, rate=0.05, depth=6, hist trees |
+
+The three ensemble wrappers default to CPU, `random_state=42` and `n_jobs=1`.
+Random Forest uses `criterion=squared_error`, `bootstrap=True` and `max_features=1.0`.
+LightGBM uses `boosting_type=gbdt`, `objective=regression`, `device_type=cpu`
+and `verbosity=-1`. Its unlimited depth is `max_depth=-1`.
+XGBoost uses `objective=reg:squarederror`, `booster=gbtree`, `tree_method=hist`,
+`device=cpu`, `subsample=1.0` and `colsample_bytree=1.0`.
+
+Constructors expose tree count, complexity controls, seed and worker count;
+the boosting wrappers also expose learning rate. The evaluator uses constructor
+defaults. These are baseline settings, not tuned CYP results.
+
 ## Splits
 
 `data_tools.load.load_data` supports `random`, `scaffold` (Bemis-Murcko) and

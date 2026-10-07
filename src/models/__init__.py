@@ -7,10 +7,16 @@ set a unique `name` class variable, and add it here.
 from models.base import CYPModel
 from models.decision_tree import DecisionTree
 from models.ridge import Ridge
+from models.random_forest import RandomForest
+from models.gbm import LightGBM
+from models.XGBoost import XGBoost
 
 REGISTRY: dict[str, type[CYPModel]] = {
     DecisionTree.name: DecisionTree,
     Ridge.name: Ridge,
+    RandomForest.name: RandomForest,
+    LightGBM.name: LightGBM,
+    XGBoost.name: XGBoost,
 }
 
 __all__ = ["CYPModel", "REGISTRY"]
