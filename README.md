@@ -5,7 +5,7 @@ Code for the OpenADMET CYP Inhibition Blind Challenge.
 **Contributing:** read [RULES.md](RULES.md) before opening a PR — how a PR should
 look, what must never be committed, the rule that only Denali submits to the live
 HuggingFace challenge, and how to use AI tools. Pick a workstream from
-[tasks/MANIFEST.md](tasks/MANIFEST.md), which also holds the shared metric, the
+[tasks/round1/MANIFEST.md](tasks/round1/MANIFEST.md), which also holds the shared metric, the
 pinned split and the join keys.
 
 ## Setup
@@ -22,6 +22,9 @@ download-data              # challenge splits (inhibition, TDI, Emax, single-con
 build-pubchem-aux          # PubChem AID 1851 (Veith CYP qHTS panel) -> per-isoform auxiliary heads
 build-union                # join challenge + auxiliary sources into one wide multi-task table
 check-overlap              # structural duplication within, and overlap between, any datasets
+build-family-datasets      # ChEMBL + BindingDB affinity data across the P450 family (Pfam PF00067)
+build-family-heads         # pivot the family datasets into one `{gene}_pIC50_{source}` head per protein per source
+add-split-column           # write the pinned train/val/test `split` column into the union table
 ```
 
 ### External data as auxiliary heads
@@ -71,10 +74,37 @@ train-chemprop --data-path data/union_train.csv --target-columns <all heads>
 `--task-weights`, ...) pass through.
 
 ```bash
+head-search                # search auxiliary-head subsets on the pinned split (single / greedy / ablation / exhaustive)
 evaluate-models            # train/val metrics for the sklearn-style models
 generate-results           # predictions for submission
-build-family-datasets      # ChEMBL + BindingDB affinity data across the P450 family (Pfam PF00067)
 ```
+
+## Representations
+
+`evaluate-models` and `generate-results` take `--input` with one or more of the
+names below; several names are hstacked into one feature matrix.
+
+| `--input` | Class | Dim | What it is |
+|---|---|---:|---|
+| `rdkit` | `RDKitDescriptors` | 217 | RDKit 2D physicochemical descriptors |
+| `chemeleon` | `CheMeleon` | 2048 | fixed pretrained CheMeleon embedding; checkpoint downloads on first use |
+| `morgan` | `MorganFingerprint` | 2048 | Morgan/ECFP4 bits, radius 2 |
+| `count_morgan` | `CountMorganFingerprint` | 2048 | same generator, substructure counts |
+| `maccs` | `MACCS` | 167 | MACCS structural keys |
+| `mordred` | `MordredDescriptors` | 1613 | Mordred 2D descriptors (`mordredcommunity`); missing values encoded as 0 |
+
+```bash
+evaluate-models --input morgan                          # one representation
+evaluate-models --input count_morgan rdkit --split butina --seed 0
+evaluate-models --input all                             # every representation on its own, one table
+```
+
+Unparsable SMILES give an all-NaN row, which `evaluate-models` drops. Features
+are cached per representation in `data/features/{name}.npy`, keyed on SMILES, so
+each molecule is featurized once across every split and seed. To add one,
+subclass `Representation` in `src/representations/` and append it to
+`INPUT_REGISTRY` in `src/data_tools/inputs.py`; see
+`reports/t2_solo_representations.md` for how the current six compare.
 
 ## Models
 
@@ -105,4 +135,9 @@ defaults. These are baseline settings, not tuned CYP results.
 ## Splits
 
 `data_tools.load.load_data` supports `random`, `scaffold` (Bemis-Murcko) and
-`butina` (Tanimoto cluster) train/val splits.
+`butina` (Tanimoto cluster) train/val splits; `evaluate-models` exposes them as
+`--split` and `--seed`.
+
+Chemprop multi-task runs use a different mechanism: `add-split-column` writes
+one pinned `split` column into `data/union_train.csv`, and `head-search`
+refuses to run without it.

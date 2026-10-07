@@ -8,9 +8,16 @@ import polars as pl
 
 from representations.chemeleon import CheMeleon
 from representations.rdkit_descriptors import RDKitDescriptors
+from representations.morgan import CountMorganFingerprint, MorganFingerprint
+from representations.maccs import MACCS
+from representations.mordred import MordredDescriptors
 
 _rdkit = RDKitDescriptors()
 _chemeleon = CheMeleon()
+_morgan = MorganFingerprint()
+_count_morgan = CountMorganFingerprint()
+_maccs = MACCS()
+_mordred = MordredDescriptors()
 
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
@@ -21,9 +28,29 @@ def _chemeleon_features(df: pl.DataFrame) -> np.ndarray:
     return _chemeleon.transform(df["SMILES"])
 
 
+def _morgan_features(df: pl.DataFrame) -> np.ndarray:
+    return _morgan.transform(df["SMILES"])
+
+
+def _count_morgan_features(df: pl.DataFrame) -> np.ndarray:
+    return _count_morgan.transform(df["SMILES"])
+
+
+def _maccs_features(df: pl.DataFrame) -> np.ndarray:
+    return _maccs.transform(df["SMILES"])
+
+
+def _mordred_features(df: pl.DataFrame) -> np.ndarray:
+    return _mordred.transform(df["SMILES"])
+
+
 INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _rdkit.name: _rdkit_features,
     _chemeleon.name: _chemeleon_features,
+    _morgan.name: _morgan_features,
+    _count_morgan.name: _count_morgan_features,
+    _maccs.name: _maccs_features,
+    _mordred.name: _mordred_features,
 }
 
 

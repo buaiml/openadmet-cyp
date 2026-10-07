@@ -56,9 +56,9 @@ Analysis task — reads everything, changes no model code.
   (20,871 molecules, 14 heads) and the family sources.
 - **Reuse the cached embeddings.** `data_tools.inputs.featurize` already caches
   CheMeleon and RDKit features content-addressed by SMILES in `data/features/`.
-  Do not recompute them. If T2 has landed, ECFP4 will be there too; if not,
-  compute Morgan directly via the same generator `load.py` uses so your
-  clustering matches the splits.
+  Do not recompute them. T2 has landed, so ECFP4 is there too as `morgan`
+  (2048-bit, radius 2 — the same parameters `load.py` uses, so your
+  clustering matches the splits).
 - Similarity and clustering machinery already exists in
   `src/data_tools/load.py::_butina_split` and
   `src/data_tools/split_column.py::_butina_groups` — same fingerprint

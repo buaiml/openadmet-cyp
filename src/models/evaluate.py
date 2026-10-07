@@ -56,14 +56,25 @@ def _resolve_models(names: list[str]) -> list[type[CYPModel]]:
     return [REGISTRY[n] for n in names]
 
 
-def _print_results(results: list[tuple[str, str, dict[str, float]]]) -> None:
-    """Print a formatted metrics table (Isoform, Model, RMSE, MAE, R2) to stdout."""
-    iso_w = max(len(iso) for iso, _, _ in results)
-    model_w = max(len(name) for _, name, _ in results)
-    print(f"{'Isoform':{iso_w}}  {'Model':{model_w}}  {'RMSE':>8}  {'MAE':>8}  {'R2':>8}")
-    print(f"{'-' * iso_w}  {'-' * model_w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
-    for iso, name, m in results:
-        print(f"{iso:{iso_w}}  {name:{model_w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
+def _resolve_inputs(names: list[str]) -> list[list[str]]:
+    """Return the input sets to evaluate: each registered input alone if names == ['all'], else names hstacked."""
+    if names == ["all"]:
+        return [[n] for n in INPUT_REGISTRY]
+    unknown = [n for n in names if n not in INPUT_REGISTRY]
+    if unknown:
+        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())}")
+    return [names]
+
+
+def _print_results(results: list[tuple[str, str, str, dict[str, float]]]) -> None:
+    """Print a formatted metrics table (Isoform, Model, Input, RMSE, MAE, R2) to stdout."""
+    iso_w = max(len(iso) for iso, _, _, _ in results)
+    model_w = max(len(name) for _, name, _, _ in results)
+    input_w = max(len(inp) for _, _, inp, _ in results)
+    print(f"{'Isoform':{iso_w}}  {'Model':{model_w}}  {'Input':{input_w}}  {'RMSE':>8}  {'MAE':>8}  {'R2':>8}")
+    print(f"{'-' * iso_w}  {'-' * model_w}  {'-' * input_w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
+    for iso, name, inp, m in results:
+        print(f"{iso:{iso_w}}  {name:{model_w}}  {inp:{input_w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
 
 
 def main() -> None:
@@ -103,7 +114,8 @@ def main() -> None:
         "--input",
         nargs="+",
         default=["rdkit"],
-        help=f"Input featurization(s) to use (hstacked if multiple). Available: {list(INPUT_REGISTRY.keys())}",
+        help="Input featurization(s) to use (hstacked if multiple), or 'all' to evaluate each registered "
+        f"input on its own. Available: {list(INPUT_REGISTRY.keys())}",
     )
     parser.add_argument("--cache-dir", default="data/features", help="Directory for cached feature matrices")
     parser.add_argument("--sort-by", default="MAE", choices=["MAE", "RMSE", "R2"], help="Metric to sort results by")
@@ -115,9 +127,7 @@ def main() -> None:
 
     try:
         model_classes = _resolve_models(args.models)
-        unknown_inputs = [n for n in args.input if n not in INPUT_REGISTRY]
-        if unknown_inputs:
-            raise ValueError(f"Unknown input(s): {unknown_inputs}. Available: {list(INPUT_REGISTRY.keys())}")
+        input_sets = _resolve_inputs(args.input)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
@@ -133,20 +143,22 @@ def main() -> None:
     )
     print(f"load_data(split_type={args.split!r}, seed={args.seed}): {len(val_df)} val / {len(train_df)} train molecules", file=sys.stderr)
 
-    # Features don't depend on the target isoform, so compute once and reuse across isoforms.
-    train_features = featurize(train_df, args.input, cache_dir)
-    val_features = featurize(val_df, args.input, cache_dir)
-
-    results: list[tuple[str, str, dict[str, float]]] = []
-    for target in args.targets:
-        X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{target}")
-        X_val, y_val = drop_nan_rows(val_features, val_df[target].to_numpy(), label=f"val/{target}")
-        for cls in model_classes:
-            metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
-            results.append((target, cls.name, metrics))
+    results: list[tuple[str, str, str, dict[str, float]]] = []
+    for input_names in input_sets:
+        input_label = " + ".join(input_names)
+        # Features don't depend on the target isoform, so compute once and reuse across isoforms.
+        train_features = featurize(train_df, input_names, cache_dir)
+        val_features = featurize(val_df, input_names, cache_dir)
+        for target in args.targets:
+            label = f"{target}, {input_label}"
+            X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{label}")
+            X_val, y_val = drop_nan_rows(val_features, val_df[target].to_numpy(), label=f"val/{label}")
+            for cls in model_classes:
+                metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+                results.append((target, cls.name, input_label, metrics))
 
     reverse = args.sort_by == "R2"
-    results.sort(key=lambda r: (r[0], -r[2][args.sort_by] if reverse else r[2][args.sort_by]))
+    results.sort(key=lambda r: (r[0], -r[3][args.sort_by] if reverse else r[3][args.sort_by]))
     print(f"isoform-mode={args.isoform_mode}  input={' + '.join(args.input)}  split={args.split}  seed={args.seed}")
     _print_results(results)
 
