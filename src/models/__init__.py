@@ -19,4 +19,14 @@ REGISTRY: dict[str, type[CYPModel]] = {
     XGBoost.name: XGBoost,
 }
 
+# tabpfn is an optional dependency: it pulls a large checkpoint and is not
+# needed by the other models, so a missing install drops `tabpfn` from the
+# registry rather than breaking every CLI that imports this module.
+try:
+    from models.TabPFN import TabPFN
+except ImportError:  # pragma: no cover - depends on the environment
+    pass
+else:
+    REGISTRY[TabPFN.name] = TabPFN
+
 __all__ = ["CYPModel", "REGISTRY"]

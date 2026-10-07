@@ -1,13 +1,10 @@
+"""TabPFN regressor for the CYP challenge.
+
+TabPFN-3.5 accepts at most 20,000 features and 1,000,000 rows, so wide
+representations may need reducing before they fit.
 """
-TabPFN CYB interface implementation with CheMeleon embeddings and PCA 
 
-
-Input dimesions: TabPFN-3.5:  20,000 features and 1,000,000 rows limit.
-"""
-
-"""TabPFN regressor for the CYP challenge."""
-
-from typing import ClassVar                                                                                               
+from typing import ClassVar
 import numpy as np
 from sklearn.pipeline import Pipeline
 
@@ -16,11 +13,11 @@ from tabpfn import TabPFNRegressor
 
 class TabPFN(CYPModel):
     """
-    TabPFN is a foundational model which develops guess based on previous unlabeled and labeled 
+    TabPFN is a foundational model which develops guess based on previous unlabeled and labeled
     pattern-related data.
     """
 
-    name: ClassVar[str] = "TabPFN"
+    name: ClassVar[str] = "tabpfn"
 
     def __init__(self) -> None:
         self._model = Pipeline(
@@ -34,4 +31,3 @@ class TabPFN(CYPModel):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self._model.predict(X)
-    

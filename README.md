@@ -120,6 +120,7 @@ scaling or PCA. Select models with `evaluate-models --models <name> ...`.
 | `random_forest` | sklearn RandomForestRegressor | 200 trees, unlimited depth, min leaf=1, all features |
 | `lightgbm` | LightGBM LGBMRegressor | 200 trees, rate=0.05, 31 leaves, unlimited depth, min child=20 |
 | `xgboost` | XGBoost XGBRegressor | 200 trees, rate=0.05, depth=6, hist trees |
+| `tabpfn` | TabPFN TabPFNRegressor | library defaults; optional dependency |
 
 The three ensemble wrappers default to CPU, `random_state=42` and `n_jobs=1`.
 Random Forest uses `criterion=squared_error`, `bootstrap=True` and `max_features=1.0`.
@@ -131,6 +132,10 @@ XGBoost uses `objective=reg:squarederror`, `booster=gbtree`, `tree_method=hist`,
 Constructors expose tree count, complexity controls, seed and worker count;
 the boosting wrappers also expose learning rate. The evaluator uses constructor
 defaults. These are baseline settings, not tuned CYP results.
+
+`tabpfn` is an optional dependency. It is registered only when the `tabpfn`
+package imports, so a missing install drops it from `--models all` instead of
+breaking the CLI. It is untuned and has not been run on CYP data yet.
 
 ## Splits
 
