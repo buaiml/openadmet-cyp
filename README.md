@@ -90,6 +90,7 @@ scaling or PCA. Select models with `evaluate-models --models <name> ...`.
 | `random_forest` | sklearn RandomForestRegressor | 200 trees, unlimited depth, min leaf=1, all features |
 | `lightgbm` | LightGBM LGBMRegressor | 200 trees, rate=0.05, 31 leaves, unlimited depth, min child=20 |
 | `xgboost` | XGBoost XGBRegressor | 200 trees, rate=0.05, depth=6, hist trees |
+| `tabpfn` | sklearn PCA + TabPFNRegressor | up to 200 PCA components, seed=42 |
 
 The three ensemble wrappers default to CPU, `random_state=42` and `n_jobs=1`.
 Random Forest uses `criterion=squared_error`, `bootstrap=True` and `max_features=1.0`.
@@ -101,6 +102,17 @@ XGBoost uses `objective=reg:squarederror`, `booster=gbtree`, `tree_method=hist`,
 Constructors expose tree count, complexity controls, seed and worker count;
 the boosting wrappers also expose learning rate. The evaluator uses constructor
 defaults. These are baseline settings, not tuned CYP results.
+
+TabPFN uses precomputed features, including CheMeleon embeddings selected with
+`--input chemeleon`. PCA learns its projection from training data only and reuses
+it for prediction. The component count is capped at the number of training rows
+and input features so small datasets and narrow representations also work.
+TabPFN requires PriorLabs license acceptance and local authentication to download
+its pretrained weights. Configure credentials locally; never commit them.
+
+```bash
+evaluate-models --models tabpfn --input chemeleon
+```
 
 ## Splits
 
