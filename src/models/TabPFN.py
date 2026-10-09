@@ -1,6 +1,10 @@
-"""TabPFN regressor with train-fitted PCA for precomputed molecular features."""
+"""TabPFN regressor for the CYP challenge.
 
-from typing import ClassVar
+TabPFN-3.5 accepts at most 20,000 features and 1,000,000 rows, so wide
+representations may need reducing before they fit.
+"""
+
+from typing import ClassVar, Literal
 
 import numpy as np
 from sklearn.decomposition import PCA
@@ -10,25 +14,37 @@ from models.base import CYPModel
 
 
 class TabPFN(CYPModel):
-    """Compress features to at most 200 dimensions before TabPFN inference.
+    """In-context tabular regressor; no gradient training happens in fit().
 
-    CheMeleon embeddings are supplied by the shared featurizer. PCA is fitted
-    only on training features and reused unchanged for predictions. Small
-    datasets or narrow representations use fewer components when necessary.
+    Callers filter missing labels with models.utils.drop_nan_rows.
     """
 
     name: ClassVar[str] = "tabpfn"
 
-    def __init__(self, n_components: int = 200, random_state: int = 42) -> None:
+    def __init__(
+        self,
+        n_estimators: int | Literal["auto"] = "auto",
+        softmax_temperature: float | Literal["auto"] = "auto",
+        ignore_pretraining_limits: bool = False,
+        device: str = "auto",
+        model_path: str = "auto",
+        random_state: int = 42,
+    ) -> None:
         from tabpfn import TabPFNRegressor
 
-        if not isinstance(n_components, int) or n_components < 1:
-            raise ValueError("n_components must be a positive integer")
-        self.n_components = n_components
         self._model = Pipeline(
             [
-                ("pca", PCA(n_components=n_components, random_state=random_state)),
-                ("regressor", TabPFNRegressor(random_state=random_state)),
+                (
+                    "regressor",
+                    TabPFNRegressor(
+                        n_estimators=n_estimators,
+                        softmax_temperature=softmax_temperature,
+                        ignore_pretraining_limits=ignore_pretraining_limits,
+                        device=device,
+                        model_path=model_path,
+                        random_state=random_state,
+                    ),
+                ),
             ]
         )
 

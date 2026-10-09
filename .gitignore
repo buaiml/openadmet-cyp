@@ -63,5 +63,10 @@ tabpfn_token
 __pycache__/
 *.py[cod]
 .venv/
-.pytest_cache/
-.ipynb_checkpoints/
+.env
+.DS_Store
+.vscode/
+*.zip
+
+# Stray model checkpoints (literal ~ dir)
+/~/
