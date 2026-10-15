@@ -11,6 +11,12 @@ from representations.rdkit_descriptors import RDKitDescriptors
 from representations.morgan import CountMorganFingerprint, MorganFingerprint
 from representations.maccs import MACCS
 from representations.mordred import MordredDescriptors
+from representations.cyp_pharmacophore import (
+    ErGFingerprint,
+    HemeCoordinationMotifs,
+    IsoformPreferenceDescriptors,
+    MechanismBasedAlerts,
+)
 
 _rdkit = RDKitDescriptors()
 _chemeleon = CheMeleon()
@@ -18,6 +24,10 @@ _morgan = MorganFingerprint()
 _count_morgan = CountMorganFingerprint()
 _maccs = MACCS()
 _mordred = MordredDescriptors()
+_cyp_heme = HemeCoordinationMotifs()
+_cyp_isoform = IsoformPreferenceDescriptors()
+_cyp_tdi = MechanismBasedAlerts()
+_erg = ErGFingerprint()
 
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
@@ -44,6 +54,22 @@ def _mordred_features(df: pl.DataFrame) -> np.ndarray:
     return _mordred.transform(df["SMILES"])
 
 
+def _cyp_heme_features(df: pl.DataFrame) -> np.ndarray:
+    return _cyp_heme.transform(df["SMILES"])
+
+
+def _cyp_isoform_features(df: pl.DataFrame) -> np.ndarray:
+    return _cyp_isoform.transform(df["SMILES"])
+
+
+def _cyp_tdi_features(df: pl.DataFrame) -> np.ndarray:
+    return _cyp_tdi.transform(df["SMILES"])
+
+
+def _erg_features(df: pl.DataFrame) -> np.ndarray:
+    return _erg.transform(df["SMILES"])
+
+
 INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _rdkit.name: _rdkit_features,
     _chemeleon.name: _chemeleon_features,
@@ -51,6 +77,11 @@ INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _count_morgan.name: _count_morgan_features,
     _maccs.name: _maccs_features,
     _mordred.name: _mordred_features,
+    # --- R2 pharmacophore blocks (append-only; versioned names pin the motif table) ---
+    _cyp_heme.name: _cyp_heme_features,
+    _cyp_isoform.name: _cyp_isoform_features,
+    _cyp_tdi.name: _cyp_tdi_features,
+    _erg.name: _erg_features,
 }
 
 

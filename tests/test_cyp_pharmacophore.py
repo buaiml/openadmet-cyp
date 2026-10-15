@@ -258,3 +258,41 @@ def test_erg_empty_input_keeps_full_width():
 def test_erg_is_deterministic():
     s = pl.Series(["CC(C)NCC(O)COc1cccc2ccccc12"])
     np.testing.assert_array_equal(ERG.transform(s), ERG.transform(s))
+
+
+def test_erg_row_matches_a_direct_rdkit_call():
+    """Shape tests alone would pass a wrong-but-same-shape fingerprint function."""
+    from rdkit import Chem
+    from rdkit.Chem import rdReducedGraphs
+
+    smi = "c1ccccc1"
+    direct = np.asarray(
+        rdReducedGraphs.GetErGFingerprint(Chem.MolFromSmiles(smi)), dtype=np.float64
+    )
+    np.testing.assert_array_equal(ERG.transform(pl.Series([smi]))[0], direct)
+
+    # structurally different molecules must not produce identical vectors
+    prop = ERG.transform(pl.Series(["CC(C)NCC(O)COc1cccc2ccccc12"]))[0]
+    assert not np.array_equal(prop, direct)
+
+
+from data_tools.inputs import INPUT_REGISTRY
+
+
+def test_all_four_blocks_are_registered():
+    for name in ["cyp_heme_v1", "cyp_isoform_v1", "cyp_tdi_v1", "erg"]:
+        assert name in INPUT_REGISTRY, f"{name} missing from INPUT_REGISTRY"
+
+
+def test_registry_entries_are_callable_and_return_correct_width():
+    df = pl.DataFrame({"SMILES": ["c1ccncc1", "CC(C)Cc1ccc(cc1)C(C)C(=O)O"]})
+    for block in [HEME, ISO, TDI, ERG]:
+        arr = INPUT_REGISTRY[block.name](df)
+        assert arr.shape == (2, len(block.feature_names)), block.name
+
+
+def test_preexisting_registry_order_is_unchanged():
+    """Registry edits are append-only; pinned results depend on the order."""
+    assert list(INPUT_REGISTRY.keys())[:6] == [
+        "rdkit", "chemeleon", "morgan", "count_morgan", "maccs", "mordred",
+    ]
