@@ -23,6 +23,7 @@ from typing import Callable, ClassVar
 import numpy as np
 import polars as pl
 from rdkit import Chem
+from rdkit.Chem import Descriptors
 from tqdm import tqdm
 
 from representations.base import Representation
@@ -133,6 +134,83 @@ _MOTIFS: tuple[Motif, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class Descriptor:
+    """One physicochemical feature with its literature justification."""
+
+    name: str
+    func: Callable[[Chem.Mol], float]
+    source: str
+    note: str = ""
+
+
+_BASIC_AMINE_PAT = Chem.MolFromSmarts(
+    "[NX3;H0,H1,H2;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]"
+)
+_ACID_PAT = Chem.MolFromSmarts("[CX3](=O)[OX2H1]")
+
+
+def _count(pattern: Chem.Mol) -> Callable[[Chem.Mol], float]:
+    def counter(mol: Chem.Mol) -> float:
+        return float(len(mol.GetSubstructMatches(pattern)))
+
+    return counter
+
+
+def _aromatic_fraction(mol: Chem.Mol) -> float:
+    """Aromatic heavy atoms / heavy atoms — a planarity proxy for CYP1A2."""
+    heavy = mol.GetNumHeavyAtoms()
+    if heavy == 0:
+        return 0.0
+    return sum(1 for a in mol.GetAtoms() if a.GetIsAromatic()) / heavy
+
+
+_SANSEN_2007 = (
+    "Sansen et al. 2007, J Biol Chem — CYP1A2 has a compact, closed active-site "
+    "cavity highly adapted for positioning relatively large, planar substrates."
+)
+_WESTER_2004 = (
+    "Wester et al. 2004, J Biol Chem — CYP2C9 Arg-108 interacts directly with "
+    "flurbiprofen's carboxylate, accounting for efficiency on anionic NSAIDs."
+)
+_YANO_2004 = (
+    "Yano et al. 2004, J Biol Chem — CYP3A4 has a relatively large substrate-binding "
+    "cavity consistent with oxidizing bulky substrates (cyclosporin, statins, taxanes)."
+)
+_KIANI_2019 = (
+    "Kiani et al. 2019, Computation — across CYP1A2/2C9/2C19/2D6/3A4, molecular "
+    "weight, H-bond acceptors/donors and lipophilicity are the important "
+    "physicochemical descriptors of CYP inhibitors."
+)
+_STEYN_2020 = (
+    "Steyn et al. 2020, Mol Pharm — over 397 clinical substrate-inhibitor pairs, "
+    "basic and neutral compounds show a higher magnitude of P450 DDIs, with "
+    "lipophilicity trends apparent."
+)
+
+_ISOFORM_FEATURES: tuple[Descriptor, ...] = (
+    Descriptor("iso_basic_amine_count", _count(_BASIC_AMINE_PAT), _PAINE_2003,
+               "Characteristic of CYP2D6 ligands. NOT a mechanism-strength proxy: "
+               "Hutzler et al. 2003 found the Asp301 charge-pair may not be the "
+               "primary binding interaction, so weak performance on the 2D6 head "
+               "is a predicted result, not a bug."),
+    Descriptor("iso_acidic_group_count", _count(_ACID_PAT), _WESTER_2004,
+               "CYP2C9's anionic-ligand preference via Arg108."),
+    Descriptor("iso_aromatic_rings", lambda m: float(Descriptors.NumAromaticRings(m)),
+               _SANSEN_2007),
+    Descriptor("iso_aromatic_frac", _aromatic_fraction, _SANSEN_2007,
+               "Planarity proxy for CYP1A2's narrow planar cavity."),
+    Descriptor("iso_fraction_csp3", lambda m: float(Descriptors.FractionCSP3(m)),
+               _SANSEN_2007, "Three-dimensionality; the complement of planarity."),
+    Descriptor("iso_mw", lambda m: float(Descriptors.MolWt(m)), _YANO_2004,
+               "Size, for CYP3A4's large cavity."),
+    Descriptor("iso_clogp", lambda m: float(Descriptors.MolLogP(m)), _STEYN_2020),
+    Descriptor("iso_tpsa", lambda m: float(Descriptors.TPSA(m)), _KIANI_2019),
+    Descriptor("iso_hba", lambda m: float(Descriptors.NumHAcceptors(m)), _KIANI_2019),
+    Descriptor("iso_hbd", lambda m: float(Descriptors.NumHDonors(m)), _KIANI_2019),
+)
+
+
 def _parse(smi: str | None) -> Chem.Mol | None:
     """Return a usable molecule, or None.
 
@@ -194,3 +272,27 @@ class MechanismBasedAlerts(_SmartsCountBlock):
     name: ClassVar[str] = f"cyp_tdi_{TABLE_VERSION}"
     block: ClassVar[str] = "tdi"
     _desc: ClassVar[str] = "TDI alerts"
+
+
+class IsoformPreferenceDescriptors(Representation):
+    """Physicochemical descriptors chosen for the four scored isoforms.
+
+    Each is justified from a cited medicinal-chemistry source in
+    `_ISOFORM_FEATURES`; see the spec's section 12.2. Per RULES.md section 5,
+    none is encoded from memory.
+    """
+
+    name: ClassVar[str] = f"cyp_isoform_{TABLE_VERSION}"
+
+    @property
+    def feature_names(self) -> list[str]:
+        return [d.name for d in _ISOFORM_FEATURES]
+
+    def transform(self, smiles: pl.Series) -> np.ndarray:
+        out = np.full((len(smiles), len(_ISOFORM_FEATURES)), np.nan, dtype=np.float64)
+        for i, smi in enumerate(tqdm(smiles.to_list(), desc="isoform descriptors", unit="mol", leave=True)):
+            mol = _parse(smi)
+            if mol is None:
+                continue
+            out[i] = [d.func(mol) for d in _ISOFORM_FEATURES]
+        return out

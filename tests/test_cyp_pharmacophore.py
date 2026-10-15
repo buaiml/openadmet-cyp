@@ -161,3 +161,54 @@ def test_hydrazine_alert():
 def test_tdi_no_match_gives_zeros_and_invalid_gives_nan():
     assert not np.isnan(TDI.transform(pl.Series(["c1ccccc1"]))).any()
     assert np.isnan(TDI.transform(pl.Series([""], dtype=pl.Utf8))).all()
+
+
+# --- isoform-preference descriptors (cyp_isoform_v1) ---
+from representations.cyp_pharmacophore import (
+    _ISOFORM_FEATURES,
+    IsoformPreferenceDescriptors,
+)
+
+ISO = IsoformPreferenceDescriptors()
+
+
+def test_every_isoform_descriptor_is_cited():
+    uncited = [d.name for d in _ISOFORM_FEATURES if not d.source.strip()]
+    assert uncited == []
+
+
+def test_isoform_width_matches_names():
+    arr = ISO.transform(pl.Series(["c1ccncc1"]))
+    assert arr.shape == (1, len(ISO.feature_names))
+
+
+def test_basic_amine_count_tracks_basicity():
+    """CYP2D6 ligands characteristically carry a basic nitrogen (Paine 2003)."""
+    assert _row(ISO, "CC(C)NCC(O)COc1cccc2ccccc12")["iso_basic_amine_count"] == 1.0  # propranolol
+    assert _row(ISO, "c1ccccc1")["iso_basic_amine_count"] == 0.0
+
+
+def test_acidic_group_count_tracks_anionic_ligands():
+    """CYP2C9 prefers anionic ligands via Arg108 (Wester 2004, Dickmann 2004)."""
+    assert _row(ISO, "CC(C)Cc1ccc(cc1)C(C)C(=O)O")["iso_acidic_group_count"] == 1.0  # ibuprofen
+    assert _row(ISO, "c1ccccc1")["iso_acidic_group_count"] == 0.0
+
+
+def test_aromatic_fraction_is_a_planarity_proxy():
+    """CYP1A2's cavity is adapted to large planar substrates (Sansen 2007)."""
+    flat = _row(ISO, "c1ccc2ccccc2c1")["iso_aromatic_frac"]      # naphthalene
+    saturated = _row(ISO, "CC1CCCCCCC1")["iso_aromatic_frac"]    # cyclooctane
+    assert flat == 1.0
+    assert saturated == 0.0
+
+
+def test_size_and_lipophilicity_present_and_finite():
+    r = _row(ISO, "CC(C)NCC(O)COc1cccc2ccccc12")
+    assert 250.0 < r["iso_mw"] < 270.0
+    assert np.isfinite(r["iso_clogp"])
+    assert r["iso_aromatic_rings"] == 2.0
+
+
+def test_isoform_invalid_smiles_gives_all_nan():
+    for bad in [None, "", "   ", "not_a_smiles"]:
+        assert np.isnan(ISO.transform(pl.Series([bad], dtype=pl.Utf8))).all()
