@@ -97,7 +97,40 @@ names below; several names are hstacked into one feature matrix.
 evaluate-models --input morgan                          # one representation
 evaluate-models --input count_morgan rdkit --split butina --seed 0
 evaluate-models --input all                             # every representation on its own, one table
+evaluate-models --models ridge --input morgan --predictions-out results/validation/morgan.csv
 ```
+
+`--predictions-out <path>` optionally saves one UTF-8 long-format CSV containing
+validation predictions for every selected model, input set, and target:
+
+```text
+smiles,isoform,model,input,split,seed,y_true,y_pred
+```
+
+`smiles` preserves the source `SMILES` string; `isoform` is the full target
+column name and `model` is its registry name. Combined inputs use their ordered
+names joined with ` + ` (for example, `count_morgan + rdkit`); `--input all`
+produces separate groups. `split` records the executed strategy (`random`,
+`scaffold`, or `butina`), and `seed` is the **split seed only**. This evaluator
+does not use the pinned split column or pass that seed to model constructors;
+models retain their own defaults. Record the command alongside exports, including
+`--val-split`, `--butina-cutoff`, and the data source, which are not CSV columns.
+
+Each model predicts validation once, and those exact values are scored and
+exported. The shared filter `np.isfinite(X).all(axis=1) & np.isfinite(y)` selects
+features, labels, and SMILES together, retaining their order. Every surviving
+row is saved, even if another representation drops that molecule. Duplicate
+source SMILES within a `(model, input, isoform, split, seed)` group cause export
+to fail with an explicit error before writing; rows are never deduplicated.
+Repeated selections that duplicate the same group also fail. Without the flag,
+evaluation retains its existing behavior, including duplicate rows.
+
+Use ignored `results/` paths for generated CSVs. Missing parent directories are
+created. Existing files are refused (exclusive creation, no overwrite or append).
+Write errors report the destination and underlying error and exit unsuccessfully;
+an I/O failure after creation can leave a partial file, which must be removed or
+given a new destination before retrying. Cross-run SMILES inner joins and
+prediction/residual correlations are a separate next task.
 
 Unparsable SMILES give an all-NaN row, which `evaluate-models` drops. Features
 are cached per representation in `data/features/{name}.npy`, keyed on SMILES, so

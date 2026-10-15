@@ -12,6 +12,7 @@ from models.ridge import Ridge
 from models.random_forest import RandomForest
 from models.gbm import LightGBM
 from models.XGBoost import XGBoost
+from models.TabPFN import TabPFN
 
 REGISTRY: dict[str, type[CYPModel]] = {
     DecisionTree.name: DecisionTree,
@@ -19,6 +20,7 @@ REGISTRY: dict[str, type[CYPModel]] = {
     RandomForest.name: RandomForest,
     LightGBM.name: LightGBM,
     XGBoost.name: XGBoost,
+    TabPFN.name: TabPFN,
 }
 
 # tabpfn is an optional dependency: it pulls a large checkpoint and is not

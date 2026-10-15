@@ -1,6 +1,7 @@
 """CLI for evaluating CYP challenge models on a train/validation split."""
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -18,6 +19,31 @@ _CYP_TARGETS = [
     "CYP2D6_pIC50_direct_inhibition",
     "CYP3A4_pIC50_direct_inhibition",
 ]
+
+_PREDICTION_COLUMNS = ["smiles", "isoform", "model", "input", "split", "seed", "y_true", "y_pred"]
+
+
+def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
+    """Write a new CSV, rejecting ambiguous join keys before creating the file."""
+    seen = set()
+    for row in rows:
+        key = tuple(row[column] for column in _PREDICTION_COLUMNS[:6])
+        if key in seen:
+            raise ValueError(
+                f"Cannot export predictions: duplicate SMILES {row['smiles']!r} within "
+                f"isoform={row['isoform']}, model={row['model']}, input={row['input']}, "
+                f"split={row['split']}, seed={row['seed']}; downstream SMILES joins would be ambiguous. "
+                "No rows were deduplicated or written."
+            )
+        seen.add(key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=_PREDICTION_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+    except OSError as exc:
+        raise OSError(f"Cannot write predictions CSV to {path}: {exc}") from exc
 
 
 def _compute_metrics(actual: pl.Series, predicted: pl.Series) -> dict[str, float]:
@@ -39,11 +65,15 @@ def _evaluate_model(
     y_train: np.ndarray,
     X_val: np.ndarray,
     y_val: np.ndarray,
-) -> dict[str, float]:
-    """Fit model on train, evaluate on val, return metrics."""
+    *,
+    return_predictions: bool = False,
+) -> dict[str, float] | tuple[dict[str, float], np.ndarray]:
+    """Fit and predict once; optionally return the predictions used for metrics."""
     model.fit(X_train, y_train)
-    preds = pl.Series("prediction", model.predict(X_val).tolist())
-    return _compute_metrics(pl.Series("actual", y_val.tolist()), preds)
+    predictions = model.predict(X_val)
+    preds = pl.Series("prediction", predictions.tolist())
+    metrics = _compute_metrics(pl.Series("actual", y_val.tolist()), preds)
+    return (metrics, predictions) if return_predictions else metrics
 
 
 def _resolve_models(names: list[str]) -> list[type[CYPModel]]:
@@ -119,6 +149,10 @@ def main() -> None:
     )
     parser.add_argument("--cache-dir", default="data/features", help="Directory for cached feature matrices")
     parser.add_argument("--sort-by", default="MAE", choices=["MAE", "RMSE", "R2"], help="Metric to sort results by")
+    parser.add_argument(
+        "--predictions-out", type=Path,
+        help="Write validation predictions to a new CSV (use results/); creates parents, refuses existing files",
+    )
     args = parser.parse_args()
 
     if not 0.0 < args.val_split < 1.0:
@@ -144,6 +178,7 @@ def main() -> None:
     print(f"load_data(split_type={args.split!r}, seed={args.seed}): {len(val_df)} val / {len(train_df)} train molecules", file=sys.stderr)
 
     results: list[tuple[str, str, str, dict[str, float]]] = []
+    prediction_rows: list[dict[str, object]] = []
     for input_names in input_sets:
         input_label = " + ".join(input_names)
         # Features don't depend on the target isoform, so compute once and reuse across isoforms.
@@ -152,10 +187,33 @@ def main() -> None:
         for target in args.targets:
             label = f"{target}, {input_label}"
             X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{label}")
-            X_val, y_val = drop_nan_rows(val_features, val_df[target].to_numpy(), label=f"val/{label}")
+            X_val, y_val, val_mask = drop_nan_rows(
+                val_features, val_df[target].to_numpy(), label=f"val/{label}", return_mask=True,
+            )
+            if args.predictions_out is not None:
+                val_smiles = val_df["SMILES"].to_numpy()[val_mask]
             for cls in model_classes:
-                metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+                if args.predictions_out is None:
+                    metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+                else:
+                    metrics, predictions = _evaluate_model(
+                        cls(), X_train, y_train, X_val, y_val, return_predictions=True,
+                    )
+                    prediction_rows.extend(
+                        dict(zip(_PREDICTION_COLUMNS, (
+                            smiles, target, cls.name, input_label, args.split, args.seed, float(actual), float(pred),
+                        )))
+                        for smiles, actual, pred in zip(val_smiles, y_val, predictions)
+                    )
                 results.append((target, cls.name, input_label, metrics))
+
+    if args.predictions_out is not None:
+        try:
+            _write_predictions(args.predictions_out, prediction_rows)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+        print(f"Wrote {len(prediction_rows)} validation predictions to {args.predictions_out}", file=sys.stderr)
 
     reverse = args.sort_by == "R2"
     results.sort(key=lambda r: (r[0], -r[3][args.sort_by] if reverse else r[3][args.sort_by]))

@@ -7,6 +7,7 @@ representations may need reducing before they fit.
 from typing import ClassVar, Literal
 
 import numpy as np
+from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 
 from models.base import CYPModel
@@ -48,6 +49,7 @@ class TabPFN(CYPModel):
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        self._model.set_params(pca__n_components=min(self.n_components, *X.shape))
         self._model.fit(X, y)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
