@@ -212,3 +212,49 @@ def test_size_and_lipophilicity_present_and_finite():
 def test_isoform_invalid_smiles_gives_all_nan():
     for bad in [None, "", "   ", "not_a_smiles"]:
         assert np.isnan(ISO.transform(pl.Series([bad], dtype=pl.Utf8))).all()
+
+
+def test_isoform_hbond_and_polarity_columns_are_not_transposed():
+    """iso_hba and iso_hbd are asymmetric for propranolol, so a swap is caught."""
+    prop = _row(ISO, "CC(C)NCC(O)COc1cccc2ccccc12")
+    assert prop["iso_hba"] == 3.0
+    assert prop["iso_hbd"] == 2.0
+    assert prop["iso_tpsa"] == pytest.approx(41.49, abs=0.01)
+    assert prop["iso_fraction_csp3"] == pytest.approx(0.375, abs=0.001)
+
+    flat = _row(ISO, "c1ccccc1")
+    assert flat["iso_hba"] == 0.0
+    assert flat["iso_hbd"] == 0.0
+    assert flat["iso_tpsa"] == 0.0
+    assert flat["iso_fraction_csp3"] == 0.0
+
+
+from representations.cyp_pharmacophore import ERG_N_FEATURES, ErGFingerprint
+
+ERG = ErGFingerprint()
+
+
+def test_erg_width_is_315():
+    assert ERG_N_FEATURES == 315
+    arr = ERG.transform(pl.Series(["CC(C)NCC(O)COc1cccc2ccccc12"]))
+    assert arr.shape == (1, 315)
+    assert len(ERG.feature_names) == 315
+
+
+def test_erg_is_not_all_zero_for_a_real_molecule():
+    arr = ERG.transform(pl.Series(["CC(C)NCC(O)COc1cccc2ccccc12"]))
+    assert (arr != 0).sum() > 0
+
+
+def test_erg_invalid_smiles_gives_all_nan():
+    for bad in [None, "", "   ", "not_a_smiles"]:
+        assert np.isnan(ERG.transform(pl.Series([bad], dtype=pl.Utf8))).all()
+
+
+def test_erg_empty_input_keeps_full_width():
+    assert ERG.transform(pl.Series([], dtype=pl.Utf8)).shape == (0, 315)
+
+
+def test_erg_is_deterministic():
+    s = pl.Series(["CC(C)NCC(O)COc1cccc2ccccc12"])
+    np.testing.assert_array_equal(ERG.transform(s), ERG.transform(s))

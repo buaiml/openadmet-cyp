@@ -23,7 +23,7 @@ from typing import Callable, ClassVar
 import numpy as np
 import polars as pl
 from rdkit import Chem
-from rdkit.Chem import Descriptors
+from rdkit.Chem import Descriptors, rdReducedGraphs
 from tqdm import tqdm
 
 from representations.base import Representation
@@ -295,4 +295,34 @@ class IsoformPreferenceDescriptors(Representation):
             if mol is None:
                 continue
             out[i] = [d.func(mol) for d in _ISOFORM_FEATURES]
+        return out
+
+
+# RDKit's ErG fingerprint length at default parameters. Verified, not assumed.
+ERG_N_FEATURES = 315
+
+
+class ErGFingerprint(Representation):
+    """RDKit extended reduced graph (ErG) pharmacophore fingerprint.
+
+    The off-the-shelf comparator for the hand-written CYP motifs. If the
+    hand-written blocks do not beat this, they are not worth maintaining.
+
+    Parameters are left at RDKit defaults deliberately: tuning them against
+    validation scores would make them fitted parameters.
+    """
+
+    name: ClassVar[str] = "erg"
+
+    @property
+    def feature_names(self) -> list[str]:
+        return [f"ErG_{i}" for i in range(ERG_N_FEATURES)]
+
+    def transform(self, smiles: pl.Series) -> np.ndarray:
+        out = np.full((len(smiles), ERG_N_FEATURES), np.nan, dtype=np.float64)
+        for i, smi in enumerate(tqdm(smiles.to_list(), desc="ErG fingerprint", unit="mol", leave=True)):
+            mol = _parse(smi)
+            if mol is None:
+                continue
+            out[i] = np.asarray(rdReducedGraphs.GetErGFingerprint(mol), dtype=np.float64)
         return out
