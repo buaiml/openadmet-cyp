@@ -122,3 +122,42 @@ def test_transform_is_deterministic():
 
 def test_dtype_is_float64():
     assert HEME.transform(pl.Series(["c1ccncc1"])).dtype == np.float64
+
+
+# --- mechanism-based inactivation (cyp_tdi_v1) ---
+from representations.cyp_pharmacophore import MechanismBasedAlerts
+
+TDI = MechanismBasedAlerts()
+
+
+def test_tdi_block_is_separate_from_heme_block():
+    assert set(TDI.feature_names).isdisjoint(HEME.feature_names)
+    assert TDI.name != HEME.name
+
+
+def test_methylenedioxyphenyl_alert():
+    assert _row(TDI, "C=CCc1ccc2OCOc2c1")["tdi_mdp"] == 1.0  # safrole
+    assert _row(TDI, "Fc1ccc(cc1)[C@@H]1CCNC[C@H]1COc1ccc2OCOc2c1")["tdi_mdp"] == 1.0  # paroxetine
+    assert _row(TDI, "c1ccccc1")["tdi_mdp"] == 0.0
+
+
+def test_terminal_alkyne_alert_excludes_internal_alkynes():
+    ethinyl = "C[C@]12CC[C@H]3[C@@H](CCc4cc(O)ccc34)[C@@H]1CC[C@]2(O)C#C"
+    assert _row(TDI, ethinyl)["tdi_terminal_alkyne"] == 1.0  # ethinylestradiol
+    assert _row(TDI, "CC#C")["tdi_terminal_alkyne"] == 1.0   # propyne
+    assert _row(TDI, "CC#CC")["tdi_terminal_alkyne"] == 0.0  # 2-butyne, internal
+
+
+def test_furan_and_thiophene_alerts():
+    assert _row(TDI, "c1ccoc1")["tdi_furan"] == 1.0
+    assert _row(TDI, "Clc1ccccc1CN1CCc2sccc2C1")["tdi_thiophene"] == 1.0  # ticlopidine
+    assert _row(TDI, "c1ccccc1")["tdi_furan"] == 0.0
+
+
+def test_hydrazine_alert():
+    assert _row(TDI, "NNC(=O)c1ccncc1")["tdi_hydrazine"] == 1.0  # isoniazid
+
+
+def test_tdi_no_match_gives_zeros_and_invalid_gives_nan():
+    assert not np.isnan(TDI.transform(pl.Series(["c1ccccc1"]))).any()
+    assert np.isnan(TDI.transform(pl.Series([""], dtype=pl.Utf8))).all()

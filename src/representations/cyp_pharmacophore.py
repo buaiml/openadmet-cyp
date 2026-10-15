@@ -73,6 +73,20 @@ _PAINE_2003 = (
     "Paine et al. 2003, J Biol Chem — CYP2D6 substrates typically contain a basic "
     "nitrogen atom; Glu-216 and Asp-301 define that specificity."
 )
+_MIRZAEI_2021 = (
+    "Mirzaei et al. 2021, Chem Res Toxicol — review of mechanism-based "
+    "inactivation latent groups: thiophene, furan, alkylamines, terminal acetylene."
+)
+_MAO_2025 = (
+    "Mao 2025, J Pharm Anal — furan, thiophene, acetylene and methylenedioxyphenyl "
+    "drive CYP3A4 mechanism-based inactivation; MDP, alkylamine and hydrazine drive "
+    "quasi-irreversible inactivation."
+)
+_DANG_2017 = (
+    "Dang et al. 2017, Chem Res Toxicol — furan and thiophene alerts are highly "
+    "conditional: each can form reactive metabolites through certain pathways but "
+    "not always. Expect weak signal on direct-inhibition heads."
+)
 
 _MOTIFS: tuple[Motif, ...] = (
     # --- ring systems bearing a coordinating nitrogen ---
@@ -81,7 +95,7 @@ _MOTIFS: tuple[Motif, ...] = (
           "1,2,4-triazole ring; ring count, not donor count"),
     Motif("heme_triazole_123", "n1nncc1", "heme", _MONK_2020, "triazole"),
     Motif("heme_tetrazole", "n1nnnc1", "heme", _MONK_2020, "triazole",
-          "Added from Monk 2020; absent from the task brief's list."),
+          "Tetrazole nitrogen also ligates heme (Monk 2020)."),
     Motif("heme_pyridine", "n1ccccc1", "heme", _MOHAMED_2023, "pyridine"),
     Motif("heme_pyrimidine", "n1cnccc1", "heme", _MOHAMED_2023, "pyridine"),
     Motif("heme_thiazole", "s1cncc1", "heme", _MONK_2020, "imidazole",
@@ -103,6 +117,19 @@ _MOTIFS: tuple[Motif, ...] = (
           "[NX3;H0,H1;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]",
           "heme", _PAINE_2003, "aliphatic amine",
           "Secondary and tertiary basic aliphatic amines."),
+    # --- mechanism-based inactivation (time-dependent, not direct, inhibition) ---
+    Motif("tdi_mdp", "c1ccc2c(c1)OCO2", "tdi", _MAO_2025, "",
+          "Methylenedioxyphenyl / benzodioxole."),
+    Motif("tdi_terminal_alkyne", "[CH1X2]#[CX2]", "tdi", _MIRZAEI_2021, "",
+          "Terminal only; internal alkynes are not alerts."),
+    Motif("tdi_furan", "o1cccc1", "tdi", _DANG_2017, ""),
+    Motif("tdi_thiophene", "s1cccc1", "tdi", _DANG_2017, ""),
+    Motif("tdi_hydrazine", "[NX3;!$(N=*)][NX3;!$(N=*)]", "tdi", _MAO_2025, "",
+          "Also matches hydrazides, which Mao 2025 includes."),
+    Motif("tdi_alkylamine_tertiary",
+          "[NX3;H0;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]",
+          "tdi", _MIRZAEI_2021, "",
+          "Tertiary alkylamines; quasi-irreversible via nitroso/iminium."),
 )
 
 
@@ -154,3 +181,16 @@ class HemeCoordinationMotifs(_SmartsCountBlock):
     name: ClassVar[str] = f"cyp_heme_{TABLE_VERSION}"
     block: ClassVar[str] = "heme"
     _desc: ClassVar[str] = "heme motifs"
+
+
+class MechanismBasedAlerts(_SmartsCountBlock):
+    """Structural alerts for time-dependent inactivation.
+
+    Emitted as a separate registered block because these concern TDI rather than
+    direct inhibition, so little signal is expected on the four scored heads.
+    Round-1 T1 adds TDI heads and will want them.
+    """
+
+    name: ClassVar[str] = f"cyp_tdi_{TABLE_VERSION}"
+    block: ClassVar[str] = "tdi"
+    _desc: ClassVar[str] = "TDI alerts"
