@@ -74,9 +74,9 @@ def write_descriptors(
     """Write a chemprop descriptor .npz. Returns (path actually written, rows affected).
 
     nan_policy:
-      "error" -- refuse to write if any row has a NaN (the safe default)
-      "fill"  -- replace NaN with fill_value; returns the number of rows touched
-      "drop"  -- remove rows containing NaN; returns the number removed
+      "error" -- refuse to write if any row has a non-finite value (the safe default)
+      "fill"  -- replace NaN/inf with fill_value; returns the number of rows touched
+      "drop"  -- remove rows containing non-finite values; returns the number removed
     """
     if nan_policy not in {"error", "fill", "drop"}:
         raise ValueError(f"nan_policy must be error/fill/drop, got {nan_policy!r}")
@@ -87,24 +87,33 @@ def write_descriptors(
         )
 
     features = np.asarray(featurize(df, input_names, Path(cache_dir)), dtype=np.float64)
-    nan_rows = np.isnan(features).any(axis=1)
+    nan_rows = (~np.isfinite(features)).any(axis=1)
     n_affected = int(nan_rows.sum())
 
     kept = df
     if n_affected:
         if nan_policy == "error":
             raise ValueError(
-                f"{n_affected} of {len(features)} rows contain NaN features "
-                "(unparseable SMILES). Choose --nan-policy fill or drop, or clean "
+                f"{n_affected} of {len(features)} rows contain non-finite values "
+                "(NaN or inf), from an unparseable SMILES or a descriptor that "
+                "overflowed. Choose --nan-policy fill or drop, or clean "
                 "the input. Refusing to write silently-imputed data."
             )
         if nan_policy == "fill":
-            features = np.nan_to_num(features, nan=fill_value)
-            print(f"[write-descriptors] filled NaN in {n_affected} row(s) with {fill_value}")
+            features = np.nan_to_num(
+                features, nan=fill_value, posinf=fill_value, neginf=fill_value
+            )
+            print(f"[write-descriptors] filled non-finite values in {n_affected} row(s) with {fill_value}")
         else:
+            if n_affected == len(features):
+                raise ValueError(
+                    f"nan_policy='drop' would remove every row ({n_affected} of "
+                    f"{len(features)}) because all contain non-finite values; "
+                    "refusing to write a zero-row descriptor file."
+                )
             features = features[~nan_rows]
             kept = df.filter(~pl.Series(nan_rows))
-            print(f"[write-descriptors] dropped {n_affected} row(s) containing NaN")
+            print(f"[write-descriptors] dropped {n_affected} row(s) containing non-finite values")
 
     names = _feature_names(input_names)
     if len(names) != features.shape[1]:

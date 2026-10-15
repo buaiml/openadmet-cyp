@@ -124,7 +124,7 @@ def test_dtype_is_float64():
     assert HEME.transform(pl.Series(["c1ccncc1"])).dtype == np.float64
 
 
-# --- mechanism-based inactivation (cyp_tdi_v1) ---
+# --- mechanism-based inactivation (cyp_tdi_v2) ---
 from representations.cyp_pharmacophore import MechanismBasedAlerts
 
 TDI = MechanismBasedAlerts()
@@ -163,7 +163,7 @@ def test_tdi_no_match_gives_zeros_and_invalid_gives_nan():
     assert np.isnan(TDI.transform(pl.Series([""], dtype=pl.Utf8))).all()
 
 
-# --- isoform-preference descriptors (cyp_isoform_v1) ---
+# --- isoform-preference descriptors (cyp_isoform_v2) ---
 from representations.cyp_pharmacophore import (
     _ISOFORM_FEATURES,
     IsoformPreferenceDescriptors,
@@ -280,7 +280,7 @@ from data_tools.inputs import INPUT_REGISTRY
 
 
 def test_all_four_blocks_are_registered():
-    for name in ["cyp_heme_v1", "cyp_isoform_v1", "cyp_tdi_v1", "erg"]:
+    for name in ["cyp_heme_v2", "cyp_isoform_v2", "cyp_tdi_v2", "erg"]:
         assert name in INPUT_REGISTRY, f"{name} missing from INPUT_REGISTRY"
 
 
@@ -295,5 +295,59 @@ def test_preexisting_registry_order_is_unchanged():
     """Registry edits are append-only; pinned results depend on the order."""
     assert list(INPUT_REGISTRY) == [
         "rdkit", "chemeleon", "morgan", "count_morgan", "maccs", "mordred",
-        "cyp_heme_v1", "cyp_isoform_v1", "cyp_tdi_v1", "erg",
+        "cyp_heme_v2", "cyp_isoform_v2", "cyp_tdi_v2", "erg",
     ]
+
+
+def test_ring_motifs_require_a_donor_nitrogen_not_merely_the_ring():
+    """A pyrimidinone or pyridone nitrogen cannot ligate iron; the ring alone is not enough."""
+    assert _row(HEME, "O=c1cc[nH]c(=O)[nH]1")["heme_pyrimidine"] == 0.0   # uracil
+    assert _row(HEME, "O=c1cccc[nH]1")["heme_pyridine"] == 0.0            # 2-pyridone
+    assert _row(HEME, "Cn1c(=O)c2c(ncn2C)n(C)c1=O")["heme_pyrimidine"] == 0.0  # caffeine
+    # true positives still fire
+    assert _row(HEME, "c1ccncc1")["heme_pyridine"] == 1.0
+    assert _row(HEME, "c1cncnc1")["heme_pyrimidine"] == 1.0
+    assert _row(HEME, "c1ccc2scnc2c1")["heme_thiazole"] == 1.0            # benzothiazole
+
+
+def test_basic_amine_patterns_exclude_amidine_guanidine_and_hydrazine():
+    """These nitrogens are not basic aliphatic amines, despite matching a naive NX3 pattern."""
+    for smi in ["CC(=N)N(C)C", "NC(=N)N(C)C", "CC(=S)N(C)C", "CN(C)NC", "CN(C)O"]:
+        r = _row(HEME, smi)
+        assert r["heme_amine_basic"] == 0.0, smi
+        assert r["heme_amine_primary"] == 0.0, smi
+
+
+def test_tertiary_alkylamine_alert_fires_and_excludes_non_amines():
+    assert _row(TDI, "CCN(CC)CC")["tdi_alkylamine_tertiary"] == 1.0   # triethylamine
+    assert _row(TDI, "CC(=O)N(C)C")["tdi_alkylamine_tertiary"] == 0.0  # amide
+    assert _row(TDI, "NC(=N)N(C)C")["tdi_alkylamine_tertiary"] == 0.0  # guanidine
+
+
+def test_hydrazine_alert_still_fires_after_amine_tightening():
+    """Tightening the amine patterns must not disturb the separate hydrazine alert."""
+    assert _row(TDI, "CN(C)NC")["tdi_hydrazine"] == 1.0
+
+
+def test_table_content_hash_pins_the_version():
+    """Editing a SMARTS or descriptor without bumping TABLE_VERSION must fail here.
+
+    If this test fails because you deliberately changed a table: bump TABLE_VERSION in
+    src/representations/cyp_pharmacophore.py, then update the expected hash below with
+    the value this failure prints. Do not update the hash without bumping the version —
+    the feature cache is keyed on the registered name, so a silent table change serves
+    stale columns (see the spec, section 5.1).
+    """
+    import hashlib
+
+    import representations.cyp_pharmacophore as cp
+
+    payload = "|".join(
+        [f"{m.name}={m.smarts}" for m in cp._MOTIFS]
+        + [d.name for d in cp._ISOFORM_FEATURES]
+        + [f"ERG={cp.ERG_N_FEATURES}", f"VERSION={cp.TABLE_VERSION}"]
+    )
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    assert digest == "701eaa7e737a5088", (
+        f"table changed; digest is now {digest}. Read this test's docstring."
+    )

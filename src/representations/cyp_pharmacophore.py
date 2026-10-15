@@ -31,7 +31,7 @@ from representations.base import Representation
 # Bump when any motif's SMARTS, order, or membership changes. The registered
 # name carries this version, so the content-addressed cache in
 # `data_tools.inputs._featurize_one` cannot serve stale columns under a new table.
-TABLE_VERSION = "v1"
+TABLE_VERSION = "v2"
 
 
 @dataclass(frozen=True)
@@ -89,19 +89,51 @@ _DANG_2017 = (
     "not always. Expect weak signal on direct-inhibition heads."
 )
 
+_AZOLE_EXTRAPOLATION = (
+    "EXTRAPOLATION, not directly sourced: Monk et al. 2020 names imidazole, triazole "
+    "and tetrazole as the azole heme-ligating pharmacophore. Thiazole and oxazole are "
+    "five-membered azoles whose pyridine-type ring nitrogen is assumed to coordinate "
+    "similarly, but no source in the spec's section 12 covers them. Treat these "
+    "columns as unvalidated."
+)
+_DIAZINE_EXTRAPOLATION = (
+    "EXTRAPOLATION, not directly sourced: Mohamed et al. 2023 covers imidazole- and "
+    "pyridine-based ligands coordinating ferric heme-thiolate. Pyrimidine is a diazine "
+    "bearing a pyridine-type donor nitrogen and is assumed to behave likewise; that "
+    "extension is not in the paper."
+)
+_T6_AMINE_CATEGORY = (
+    "tasks/round1/T6-structure-features.md:64-65 — T6's own coordinating-environment "
+    "category list names 'aliphatic amine' alongside imidazole, triazole and pyridine, "
+    "which is what this column mirrors. Note Paine et al. 2003 supports only that a "
+    "basic nitrogen is characteristic of CYP2D6 ligands; it says nothing about "
+    "aliphatic amines ligating heme iron."
+)
+_TPSA_EXTRAPOLATION = (
+    "EXTRAPOLATION, not directly sourced: Kiani et al. 2019 names molecular weight, "
+    "H-bond acceptors/donors and lipophilicity as the important descriptors of CYP "
+    "inhibitors. TPSA is a polarity surrogate for that finding and is not named in "
+    "the paper."
+)
+_CSP3_EXTRAPOLATION = (
+    "EXTRAPOLATION, not directly sourced: Sansen et al. 2007 shows CYP1A2's cavity is "
+    "adapted to large planar substrates. Fraction Csp3 is the three-dimensionality "
+    "complement of that observation and is not a measure the paper uses."
+)
+
 _MOTIFS: tuple[Motif, ...] = (
     # --- ring systems bearing a coordinating nitrogen ---
     Motif("heme_imidazole", "[nX2H0]1c[nX3]cc1", "heme", _MONK_2020, "imidazole"),
-    Motif("heme_triazole_124", "n1ncnc1", "heme", _MONK_2020, "triazole",
+    Motif("heme_triazole_124", "[nX2H0]1ncnc1", "heme", _MONK_2020, "triazole",
           "1,2,4-triazole ring; ring count, not donor count"),
-    Motif("heme_triazole_123", "n1nncc1", "heme", _MONK_2020, "triazole"),
-    Motif("heme_tetrazole", "n1nnnc1", "heme", _MONK_2020, "triazole",
+    Motif("heme_triazole_123", "n1n[nX2H0]cc1", "heme", _MONK_2020, "triazole"),
+    Motif("heme_tetrazole", "[nX2H0]1nnnc1", "heme", _MONK_2020, "triazole",
           "Tetrazole nitrogen also ligates heme (Monk 2020)."),
-    Motif("heme_pyridine", "n1ccccc1", "heme", _MOHAMED_2023, "pyridine"),
-    Motif("heme_pyrimidine", "n1cnccc1", "heme", _MOHAMED_2023, "pyridine"),
-    Motif("heme_thiazole", "s1cncc1", "heme", _MONK_2020, "imidazole",
+    Motif("heme_pyridine", "[nX2H0]1ccccc1", "heme", _MOHAMED_2023, "pyridine"),
+    Motif("heme_pyrimidine", "[nX2H0]1cnccc1", "heme", _DIAZINE_EXTRAPOLATION, "pyridine"),
+    Motif("heme_thiazole", "s1c[nX2H0]cc1", "heme", _AZOLE_EXTRAPOLATION, "imidazole",
           "Five-membered azole; donor N resembles imidazole N3 more than pyridine."),
-    Motif("heme_oxazole", "o1cncc1", "heme", _MONK_2020, "imidazole"),
+    Motif("heme_oxazole", "o1c[nX2H0]cc1", "heme", _AZOLE_EXTRAPOLATION, "imidazole"),
     # --- donor accessibility ---
     Motif("heme_donor_total", _DONOR, "heme", _MOHAMED_2023, "",
           "All aromatic sp2 donor nitrogens, hindered or not."),
@@ -111,12 +143,12 @@ _MOTIFS: tuple[Motif, ...] = (
     Motif("heme_donor_hindered", _DONOR_HINDERED, "heme", _PERRIN_2009, ""),
     # --- aliphatic amines ---
     Motif("heme_amine_primary",
-          "[NX3;H2;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*)]",
-          "heme", _PAINE_2003, "aliphatic amine",
+          "[NX3;H2;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(NC=[N,S,O]);!$(N[N,O])]",
+          "heme", _T6_AMINE_CATEGORY, "aliphatic amine",
           "Excludes amides, sulfonamides and anilines, which are not donors."),
     Motif("heme_amine_basic",
-          "[NX3;H0,H1;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]",
-          "heme", _PAINE_2003, "aliphatic amine",
+          "[NX3;H0,H1;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(NC=[N,S,O]);!$(N[N,O]);!$(N#*)]",
+          "heme", _T6_AMINE_CATEGORY, "aliphatic amine",
           "Secondary and tertiary basic aliphatic amines."),
     # --- mechanism-based inactivation (time-dependent, not direct, inhibition) ---
     Motif("tdi_mdp", "c1ccc2c(c1)OCO2", "tdi", _MAO_2025, "",
@@ -128,9 +160,11 @@ _MOTIFS: tuple[Motif, ...] = (
     Motif("tdi_hydrazine", "[NX3;!$(N=*)][NX3;!$(N=*)]", "tdi", _MAO_2025, "",
           "Also matches hydrazides, which Mao 2025 includes."),
     Motif("tdi_alkylamine_tertiary",
-          "[NX3;H0;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]",
+          "[NX3;H0;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(NC=[N,S,O]);!$(N[N,O]);!$(N#*)]",
           "tdi", _MIRZAEI_2021, "",
-          "Tertiary alkylamines; quasi-irreversible via nitroso/iminium."),
+          "Tertiary alkylamines. Mao 2025 lists alkylamine-containing compounds among "
+          "the causes of quasi-irreversible CYP3A4 inactivation; the specific reactive "
+          "intermediate is not asserted here."),
 )
 
 
@@ -145,7 +179,7 @@ class Descriptor:
 
 
 _BASIC_AMINE_PAT = Chem.MolFromSmarts(
-    "[NX3;H0,H1,H2;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(N#*)]"
+    "[NX3;H0,H1,H2;!$(NC=O);!$(NS(=O)=O);!$(N[a]);!$(N=*);!$(NC=[N,S,O]);!$(N[N,O]);!$(N#*)]"
 )
 _ACID_PAT = Chem.MolFromSmarts("[CX3](=O)[OX2H1]")
 
@@ -201,11 +235,11 @@ _ISOFORM_FEATURES: tuple[Descriptor, ...] = (
     Descriptor("iso_aromatic_frac", _aromatic_fraction, _SANSEN_2007,
                "Planarity proxy for CYP1A2's narrow planar cavity."),
     Descriptor("iso_fraction_csp3", lambda m: float(Descriptors.FractionCSP3(m)),
-               _SANSEN_2007, "Three-dimensionality; the complement of planarity."),
+               _CSP3_EXTRAPOLATION, "Three-dimensionality; the complement of planarity."),
     Descriptor("iso_mw", lambda m: float(Descriptors.MolWt(m)), _YANO_2004,
                "Size, for CYP3A4's large cavity."),
     Descriptor("iso_clogp", lambda m: float(Descriptors.MolLogP(m)), _STEYN_2020),
-    Descriptor("iso_tpsa", lambda m: float(Descriptors.TPSA(m)), _KIANI_2019),
+    Descriptor("iso_tpsa", lambda m: float(Descriptors.TPSA(m)), _TPSA_EXTRAPOLATION),
     Descriptor("iso_hba", lambda m: float(Descriptors.NumHAcceptors(m)), _KIANI_2019),
     Descriptor("iso_hbd", lambda m: float(Descriptors.NumHDonors(m)), _KIANI_2019),
 )
