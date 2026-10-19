@@ -29,11 +29,15 @@ class TabPFN(CYPModel):
         device: str = "auto",
         model_path: str = "auto",
         random_state: int = 42,
+        n_components: int | None = 256,
     ) -> None:
         from tabpfn import TabPFNRegressor
 
+        # Clamped to the data shape in fit(); None skips the PCA step.
+        self.n_components = n_components
         self._model = Pipeline(
             [
+                *([("pca", PCA(random_state=random_state))] if n_components else []),
                 (
                     "regressor",
                     TabPFNRegressor(
@@ -49,7 +53,8 @@ class TabPFN(CYPModel):
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        self._model.set_params(pca__n_components=min(self.n_components, *X.shape))
+        if self.n_components:
+            self._model.set_params(pca__n_components=min(self.n_components, *X.shape))
         self._model.fit(X, y)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
