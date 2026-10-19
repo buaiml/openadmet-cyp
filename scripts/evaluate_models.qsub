@@ -9,7 +9,7 @@
 #$ -pe omp 4
 
 module load miniconda
-conda activate openadmet-cyp
+conda activate cyp
 
 export PYTHONNOUSERSITE=1      # don't let ~/.local packages shadow the conda env
 cd "$SGE_O_WORKDIR"
