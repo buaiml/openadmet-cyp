@@ -70,3 +70,4 @@ __pycache__/
 
 # Stray model checkpoints (literal ~ dir)
 /~/
+.chemeleon/
