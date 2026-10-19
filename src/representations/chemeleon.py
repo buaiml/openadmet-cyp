@@ -35,11 +35,7 @@ def _load_model():
 
     _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     if not _CHECKPOINT_PATH.exists():
-        # Download to a temp name so an interrupted or failed download never leaves
-        # a truncated checkpoint that later loads as a corrupt zip.
-        partial = _CHECKPOINT_PATH.with_suffix(".pt.partial")
-        urlretrieve(_CHECKPOINT_URL, partial)
-        partial.replace(_CHECKPOINT_PATH)
+        urlretrieve(_CHECKPOINT_URL, _CHECKPOINT_PATH)
 
     checkpoint = torch.load(_CHECKPOINT_PATH, weights_only=True)
     mp = nn.BondMessagePassing(**checkpoint["hyper_parameters"])
