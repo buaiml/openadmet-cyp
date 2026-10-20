@@ -43,6 +43,7 @@ def _feature_names(input_names: list[str]) -> list[str]:
     back to positional ``desc_N`` names when the result has the wrong width.
     """
     import representations.cyp_pharmacophore as cp
+    from representations.cyp_xtb import XTBElectronic, XTBSolvation
     from representations.maccs import MACCS
     from representations.mordred import MordredDescriptors
     from representations.morgan import CountMorganFingerprint, MorganFingerprint
@@ -52,7 +53,7 @@ def _feature_names(input_names: list[str]) -> list[str]:
         RDKitDescriptors(), MorganFingerprint(), CountMorganFingerprint(),
         MACCS(), MordredDescriptors(), cp.HemeCoordinationMotifs(),
         cp.IsoformPreferenceDescriptors(), cp.MechanismBasedAlerts(),
-        cp.ErGFingerprint(),
+        cp.ErGFingerprint(), XTBSolvation(), XTBElectronic(),
     ]
     by_name = {b.name: b for b in known}
     names: list[str] = []
