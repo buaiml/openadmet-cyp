@@ -17,6 +17,7 @@ from representations.cyp_pharmacophore import (
     IsoformPreferenceDescriptors,
     MechanismBasedAlerts,
 )
+from representations.cyp_xtb import XTBElectronic, XTBSolvation
 
 _rdkit = RDKitDescriptors()
 _chemeleon = CheMeleon()
@@ -28,6 +29,8 @@ _cyp_heme = HemeCoordinationMotifs()
 _cyp_isoform = IsoformPreferenceDescriptors()
 _cyp_tdi = MechanismBasedAlerts()
 _erg = ErGFingerprint()
+_xtb_solv = XTBSolvation()
+_xtb_elec = XTBElectronic()
 
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
@@ -70,6 +73,14 @@ def _erg_features(df: pl.DataFrame) -> np.ndarray:
     return _erg.transform(df["SMILES"])
 
 
+def _xtb_solv_features(df: pl.DataFrame) -> np.ndarray:
+    return _xtb_solv.transform(df["SMILES"])
+
+
+def _xtb_elec_features(df: pl.DataFrame) -> np.ndarray:
+    return _xtb_elec.transform(df["SMILES"])
+
+
 INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _rdkit.name: _rdkit_features,
     _chemeleon.name: _chemeleon_features,
@@ -82,6 +93,9 @@ INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _cyp_isoform.name: _cyp_isoform_features,
     _cyp_tdi.name: _cyp_tdi_features,
     _erg.name: _erg_features,
+    # --- GFN2-xTB blocks (tblite; conformer ensembles, slow: the cache is essential) ---
+    _xtb_solv.name: _xtb_solv_features,
+    _xtb_elec.name: _xtb_elec_features,
 }
 
 
