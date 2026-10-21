@@ -2,11 +2,16 @@
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
 import polars as pl
+from rich import box
+from rich.console import Console
+from rich.markup import escape
+from rich.table import Table
 
 from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 from data_tools.load import load_data
@@ -19,6 +24,8 @@ _CYP_TARGETS = [
     "CYP2D6_pIC50_direct_inhibition",
     "CYP3A4_pIC50_direct_inhibition",
 ]
+
+console = Console()
 
 _PREDICTION_COLUMNS = ["smiles", "isoform", "model", "input", "split", "seed", "y_true", "y_pred"]
 
@@ -100,15 +107,42 @@ def _resolve_inputs(groups: list[list[str]]) -> list[list[str]]:
     return sets
 
 
-def _print_results(results: list[tuple[str, str, str, dict[str, float]]]) -> None:
-    """Print a formatted metrics table (Isoform, Model, Input, RMSE, MAE, R2) to stdout."""
-    iso_w = max(len(iso) for iso, _, _, _ in results)
-    model_w = max(len(name) for _, name, _, _ in results)
-    input_w = max(len(inp) for _, _, inp, _ in results)
-    print(f"{'Isoform':{iso_w}}  {'Model':{model_w}}  {'Input':{input_w}}  {'RMSE':>8}  {'MAE':>8}  {'R2':>8}")
-    print(f"{'-' * iso_w}  {'-' * model_w}  {'-' * input_w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
+def _short(label: str) -> str:
+    """Shorten `chemprop[/long/path/best.pt]` to `chemprop[best.pt]` for display."""
+    return re.sub(r"chemprop\[([^\]]*)\]", lambda m: f"chemprop[{Path(m.group(1)).name}]", label)
+
+
+def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_by: str) -> None:
+    """Print one metrics table per isoform, with the best row on each metric in green."""
+    lower_is_better = {"RMSE": True, "MAE": True, "R2": False}
+    by_isoform: dict[str, list[tuple[str, str, dict[str, float]]]] = {}
     for iso, name, inp, m in results:
-        print(f"{iso:{iso_w}}  {name:{model_w}}  {inp:{input_w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
+        by_isoform.setdefault(iso, []).append((name, inp, m))
+
+    table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title_style="bold")
+    table.add_column("Isoform", style="bold")
+    table.add_column("Model")
+    table.add_column("Input", overflow="fold")
+    for metric in lower_is_better:
+        table.add_column(metric + (" ▲" if metric == "R2" else " ▼") if metric == sort_by else metric, justify="right")
+
+    for i, (iso, rows) in enumerate(by_isoform.items()):
+        best = {
+            metric: (min if lower else max)(r[2][metric] for r in rows) for metric, lower in lower_is_better.items()
+        }
+        for j, (name, inp, m) in enumerate(rows):
+            cells = []
+            for metric in lower_is_better:
+                text = f"{m[metric]:.4f}"
+                if m[metric] == best[metric]:
+                    cells.append(f"[bold green]{text}[/]")
+                elif metric == "R2" and m[metric] < 0:
+                    cells.append(f"[red]{text}[/]")
+                else:
+                    cells.append(text)
+            table.add_row(iso.replace("_pIC50_direct_inhibition", "") if j == 0 else "", name, escape(_short(inp)), *cells,
+                          end_section=j == len(rows) - 1 and i < len(by_isoform) - 1)
+    console.print(table)
 
 
 def _print_correlations(target: str, preds: dict[tuple[str, str], dict[int, float]]) -> None:
@@ -118,21 +152,30 @@ def _print_correlations(target: str, preds: dict[tuple[str, str], dict[int, floa
     NaN filtering dropped different rows are compared on their shared molecules.
     """
     labels = list(preds)
-    names = [f"{model} [{inp}]" for model, inp in labels]
-    width = max(len(n) for n in names)
-    print(f"\nPrediction correlation (Pearson) -- {target}")
-    print(f"{'':{width}}  " + "  ".join(f"{i:>5}" for i in range(len(labels))))
-    for i, (name, a) in enumerate(zip(names, labels)):
+    table = Table(
+        box=box.SIMPLE_HEAD,
+        header_style="bold cyan",
+        title=f"Prediction correlation (Pearson) · {target.replace('_pIC50_direct_inhibition', '')}",
+        title_style="bold",
+    )
+    table.add_column("", style="bold", overflow="fold")
+    for i in range(len(labels)):
+        table.add_column(str(i), justify="right")
+    for i, a in enumerate(labels):
         cells = []
-        for b in labels:
+        for j, b in enumerate(labels):
             shared = sorted(preds[a].keys() & preds[b].keys())
-            if len(shared) < 2:
-                cells.append(f"{'n/a':>5}")
-                continue
             x = np.array([preds[a][k] for k in shared])
             y = np.array([preds[b][k] for k in shared])
-            cells.append(f"{np.corrcoef(x, y)[0, 1]:>5.2f}" if x.std() > 0 and y.std() > 0 else f"{'n/a':>5}")
-        print(f"{name:{width}}  " + "  ".join(cells) + f"   <- {i}")
+            if len(shared) < 2 or x.std() == 0 or y.std() == 0:
+                cells.append("[dim]n/a[/]")
+                continue
+            r = float(np.corrcoef(x, y)[0, 1])
+            color = "dim" if i == j else "green" if r >= 0.9 else "yellow" if r >= 0.6 else "red"
+            cells.append(f"[{color}]{r:.2f}[/]")
+        table.add_row(escape(f"{i}  {a[0]} [{_short(a[1])}]"), *cells)
+    console.print()
+    console.print(table)
 
 
 def main() -> None:
@@ -261,8 +304,12 @@ def main() -> None:
 
     reverse = args.sort_by == "R2"
     results.sort(key=lambda r: (r[0], -r[3][args.sort_by] if reverse else r[3][args.sort_by]))
-    print(f"isoform-mode={args.isoform_mode}  input={' | '.join(' + '.join(g) for g in args.input)}  split={args.split}  seed={args.seed}")
-    _print_results(results)
+    console.print(
+        f"[dim]isoform-mode[/]={args.isoform_mode}  [dim]input[/]="
+        + escape(_short(" | ".join(" + ".join(g) for g in args.input)))
+        + f"  [dim]split[/]={args.split}  [dim]seed[/]={args.seed}"
+    )
+    _print_results(results, args.sort_by)
     if args.correlation:
         for target, preds in corr_preds.items():
             if len(preds) < 2:
