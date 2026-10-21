@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+from scipy import stats
 from rich import box
 from rich.console import Console
 from rich.markup import escape
@@ -53,17 +54,35 @@ def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
         raise OSError(f"Cannot write predictions CSV to {path}: {exc}") from exc
 
 
+_METRICS = ["RMSE", "MAE", "R2", "ST-RAE", "Spearman", "Kendall"]
+# Direction each metric improves in: True = lower is better.
+_HEADERS = {"RMSE": "RMSE", "MAE": "MAE", "R2": "R2", "ST-RAE": "ST-RAE", "Spearman": "ρ", "Kendall": "τ"}
+_LOWER_IS_BETTER = {"RMSE": True, "MAE": True, "R2": False, "ST-RAE": True, "Spearman": False, "Kendall": False}
+
+
 def _compute_metrics(actual: pl.Series, predicted: pl.Series) -> dict[str, float]:
-    """Compute RMSE, MAE, and R2 from actual and predicted Series."""
-    a = [float(v) for v in actual]
-    p = [float(v) for v in predicted]
+    """Compute RMSE, MAE, R2, ST-RAE, Spearman's rho and Kendall's tau from actual and predicted Series.
+
+    ST-RAE is the relative absolute error of one target: total absolute error over
+    the total absolute error of always predicting the validation mean (<1 beats the mean).
+    Rank correlations are NaN when either side is constant.
+    """
+    a = np.array([float(v) for v in actual])
+    p = np.array([float(v) for v in predicted])
     n = len(a)
-    mean_a = sum(a) / n
-    ss_res = sum((ai - pi) ** 2 for ai, pi in zip(a, p))
-    ss_tot = sum((ai - mean_a) ** 2 for ai in a)
-    mae = sum(abs(ai - pi) for ai, pi in zip(a, p)) / n
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0.0 else 0.0
-    return {"RMSE": (ss_res / n) ** 0.5, "MAE": mae, "R2": r2}
+    ss_res = float(((a - p) ** 2).sum())
+    ss_tot = float(((a - a.mean()) ** 2).sum())
+    abs_err = float(np.abs(a - p).sum())
+    abs_dev = float(np.abs(a - a.mean()).sum())
+    constant = a.std() == 0 or p.std() == 0
+    return {
+        "RMSE": (ss_res / n) ** 0.5,
+        "MAE": abs_err / n,
+        "R2": 1.0 - ss_res / ss_tot if ss_tot > 0.0 else 0.0,
+        "ST-RAE": abs_err / abs_dev if abs_dev > 0.0 else float("nan"),
+        "Spearman": float("nan") if constant else float(stats.spearmanr(a, p).statistic),
+        "Kendall": float("nan") if constant else float(stats.kendalltau(a, p).statistic),
+    }
 
 
 def _evaluate_model(
@@ -112,36 +131,67 @@ def _short(label: str) -> str:
     return re.sub(r"chemprop\[([^\]]*)\]", lambda m: f"chemprop[{Path(m.group(1)).name}]", label)
 
 
+def _aggregate(results: list[tuple[str, str, str, dict[str, float]]]) -> list[tuple[str, str, dict[str, float]]]:
+    """Macro-average each metric over isoforms per (model, input); NaNs are skipped per metric."""
+    grouped: dict[tuple[str, str], list[dict[str, float]]] = {}
+    for _, name, inp, m in results:
+        grouped.setdefault((name, inp), []).append(m)
+    return [
+        (name, inp, {k: float(np.nanmean([m[k] for m in ms])) if not all(np.isnan(m[k]) for m in ms) else float("nan")
+                     for k in _METRICS})
+        for (name, inp), ms in grouped.items()
+    ]
+
+
+def _format_cell(metric: str, value: float, best: float) -> str:
+    if np.isnan(value):
+        return "[dim]n/a[/]"
+    text = f"{value:.3f}"
+    if value == best:
+        return f"[bold green]{text}[/]"
+    if metric in ("R2", "Spearman", "Kendall") and value < 0:
+        return f"[red]{text}[/]"
+    return text
+
+
 def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_by: str) -> None:
-    """Print one metrics table per isoform, with the best row on each metric in green."""
-    lower_is_better = {"RMSE": True, "MAE": True, "R2": False}
+    """Print one metrics table with a block per isoform and a final macro-average block.
+
+    The best value on each metric within a block is bold green.
+    """
     by_isoform: dict[str, list[tuple[str, str, dict[str, float]]]] = {}
     for iso, name, inp, m in results:
         by_isoform.setdefault(iso, []).append((name, inp, m))
+    blocks = list(by_isoform.items())
+    if len(by_isoform) > 1:
+        macro = _aggregate(results)
+        reverse = not _LOWER_IS_BETTER[sort_by]
+        macro.sort(key=lambda r: (-r[2][sort_by] if reverse else r[2][sort_by]) if not np.isnan(r[2][sort_by]) else float("inf"))
+        blocks.append(("MEAN", macro))
 
-    table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title_style="bold")
-    table.add_column("Isoform", style="bold")
-    table.add_column("Model")
+    table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title_style="bold", padding=(0, 1), pad_edge=False)
+    table.add_column("Isoform", style="bold", no_wrap=True)
+    table.add_column("Model", overflow="fold")
     table.add_column("Input", overflow="fold")
-    for metric in lower_is_better:
-        table.add_column(metric + (" ▲" if metric == "R2" else " ▼") if metric == sort_by else metric, justify="right")
+    for metric in _METRICS:
+        arrow = " ▼" if _LOWER_IS_BETTER[metric] else " ▲"
+        header = _HEADERS[metric] + (arrow if metric == sort_by else "")
+        table.add_column(header, justify="right", no_wrap=True, min_width=len(header))
 
-    for i, (iso, rows) in enumerate(by_isoform.items()):
-        best = {
-            metric: (min if lower else max)(r[2][metric] for r in rows) for metric, lower in lower_is_better.items()
-        }
+    for i, (iso, rows) in enumerate(blocks):
+        best = {}
+        for metric, lower in _LOWER_IS_BETTER.items():
+            values = [r[2][metric] for r in rows if not np.isnan(r[2][metric])]
+            best[metric] = (min if lower else max)(values) if values else float("nan")
         for j, (name, inp, m) in enumerate(rows):
-            cells = []
-            for metric in lower_is_better:
-                text = f"{m[metric]:.4f}"
-                if m[metric] == best[metric]:
-                    cells.append(f"[bold green]{text}[/]")
-                elif metric == "R2" and m[metric] < 0:
-                    cells.append(f"[red]{text}[/]")
-                else:
-                    cells.append(text)
-            table.add_row(iso.replace("_pIC50_direct_inhibition", "") if j == 0 else "", name, escape(_short(inp)), *cells,
-                          end_section=j == len(rows) - 1 and i < len(by_isoform) - 1)
+            label = iso.replace("_pIC50_direct_inhibition", "") if j == 0 else ""
+            table.add_row(
+                f"[bold magenta]{label}[/]" if iso == "MEAN" else label,
+                name,
+                escape(_short(inp)),
+                *(_format_cell(metric, m[metric], best[metric]) for metric in _METRICS),
+                end_section=j == len(rows) - 1 and i < len(blocks) - 1,
+            )
     console.print(table)
 
 
@@ -226,7 +276,7 @@ def main() -> None:
         "across every (model, input) combination, per target",
     )
     parser.add_argument("--cache-dir", default="data/features", help="Directory for cached feature matrices")
-    parser.add_argument("--sort-by", default="MAE", choices=["MAE", "RMSE", "R2"], help="Metric to sort results by")
+    parser.add_argument("--sort-by", default="MAE", choices=_METRICS, help="Metric to sort results by")
     parser.add_argument(
         "--predictions-out", type=Path,
         help="Write validation predictions to a new CSV (use results/); creates parents, refuses existing files",
@@ -302,8 +352,13 @@ def main() -> None:
             sys.exit(1)
         print(f"Wrote {len(prediction_rows)} validation predictions to {args.predictions_out}", file=sys.stderr)
 
-    reverse = args.sort_by == "R2"
-    results.sort(key=lambda r: (r[0], -r[3][args.sort_by] if reverse else r[3][args.sort_by]))
+    reverse = not _LOWER_IS_BETTER[args.sort_by]
+
+    def _sort_key(r: tuple[str, str, str, dict[str, float]]) -> tuple[str, float]:
+        value = r[3][args.sort_by]
+        return (r[0], float("inf") if np.isnan(value) else -value if reverse else value)
+
+    results.sort(key=_sort_key)
     console.print(
         f"[dim]isoform-mode[/]={args.isoform_mode}  [dim]input[/]="
         + escape(_short(" | ".join(" + ".join(g) for g in args.input)))

@@ -12,3 +12,4 @@ xgboost
 tabpfn
 lightgbm
 rich
+scipy
