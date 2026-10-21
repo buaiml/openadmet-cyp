@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from data_tools.inputs import INPUT_REGISTRY, featurize
+from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 
 
 def _feature_names(input_names: list[str]) -> list[str]:
@@ -80,7 +80,7 @@ def write_descriptors(
     """
     if nan_policy not in {"error", "fill", "drop"}:
         raise ValueError(f"nan_policy must be error/fill/drop, got {nan_policy!r}")
-    unknown = [n for n in input_names if n not in INPUT_REGISTRY]
+    unknown = [n for n in input_names if not is_known_input(n)]
     if unknown:
         raise ValueError(
             f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY)}"

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from data_tools.inputs import INPUT_REGISTRY, featurize
+from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 from data_tools.load import load_data
 from models import REGISTRY, CYPModel
 from models.utils import drop_nan_rows
@@ -93,7 +93,7 @@ def _resolve_inputs(groups: list[list[str]]) -> list[list[str]]:
         if names == ["all"]:
             sets.extend([n] for n in INPUT_REGISTRY)
             continue
-        unknown = [n for n in names if n not in INPUT_REGISTRY]
+        unknown = [n for n in names if not is_known_input(n)]
         if unknown:
             raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())}")
         sets.append(names)
