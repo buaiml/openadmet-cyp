@@ -86,14 +86,18 @@ def _resolve_models(names: list[str]) -> list[type[CYPModel]]:
     return [REGISTRY[n] for n in names]
 
 
-def _resolve_inputs(names: list[str]) -> list[list[str]]:
-    """Return the input sets to evaluate: each registered input alone if names == ['all'], else names hstacked."""
-    if names == ["all"]:
-        return [[n] for n in INPUT_REGISTRY]
-    unknown = [n for n in names if n not in INPUT_REGISTRY]
-    if unknown:
-        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())}")
-    return [names]
+def _resolve_inputs(groups: list[list[str]]) -> list[list[str]]:
+    """Return the input sets to evaluate: each registered input alone for ['all'], else each group hstacked."""
+    sets: list[list[str]] = []
+    for names in groups:
+        if names == ["all"]:
+            sets.extend([n] for n in INPUT_REGISTRY)
+            continue
+        unknown = [n for n in names if n not in INPUT_REGISTRY]
+        if unknown:
+            raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())}")
+        sets.append(names)
+    return sets
 
 
 def _print_results(results: list[tuple[str, str, str, dict[str, float]]]) -> None:
@@ -105,6 +109,30 @@ def _print_results(results: list[tuple[str, str, str, dict[str, float]]]) -> Non
     print(f"{'-' * iso_w}  {'-' * model_w}  {'-' * input_w}  {'-' * 8}  {'-' * 8}  {'-' * 8}")
     for iso, name, inp, m in results:
         print(f"{iso:{iso_w}}  {name:{model_w}}  {inp:{input_w}}  {m['RMSE']:>8.4f}  {m['MAE']:>8.4f}  {m['R2']:>8.4f}")
+
+
+def _print_correlations(target: str, preds: dict[tuple[str, str], dict[int, float]]) -> None:
+    """Print an all-vs-all Pearson correlation matrix of validation predictions for one target.
+
+    Each config's predictions are keyed by validation row index, so configs whose
+    NaN filtering dropped different rows are compared on their shared molecules.
+    """
+    labels = list(preds)
+    names = [f"{model} [{inp}]" for model, inp in labels]
+    width = max(len(n) for n in names)
+    print(f"\nPrediction correlation (Pearson) -- {target}")
+    print(f"{'':{width}}  " + "  ".join(f"{i:>5}" for i in range(len(labels))))
+    for i, (name, a) in enumerate(zip(names, labels)):
+        cells = []
+        for b in labels:
+            shared = sorted(preds[a].keys() & preds[b].keys())
+            if len(shared) < 2:
+                cells.append(f"{'n/a':>5}")
+                continue
+            x = np.array([preds[a][k] for k in shared])
+            y = np.array([preds[b][k] for k in shared])
+            cells.append(f"{np.corrcoef(x, y)[0, 1]:>5.2f}" if x.std() > 0 and y.std() > 0 else f"{'n/a':>5}")
+        print(f"{name:{width}}  " + "  ".join(cells) + f"   <- {i}")
 
 
 def main() -> None:
@@ -143,9 +171,16 @@ def main() -> None:
     parser.add_argument(
         "--input",
         nargs="+",
-        default=["rdkit"],
+        action="append",
         help="Input featurization(s) to use (hstacked if multiple), or 'all' to evaluate each registered "
-        f"input on its own. Available: {list(INPUT_REGISTRY.keys())}",
+        "input on its own. Repeat the flag to evaluate several input sets separately, "
+        f"e.g. --input xtb_solv_v1 --input chemeleon. Default: rdkit. Available: {list(INPUT_REGISTRY.keys())}",
+    )
+    parser.add_argument(
+        "--correlation",
+        action="store_true",
+        help="After evaluating, print an all-vs-all correlation matrix of validation predictions "
+        "across every (model, input) combination, per target",
     )
     parser.add_argument("--cache-dir", default="data/features", help="Directory for cached feature matrices")
     parser.add_argument("--sort-by", default="MAE", choices=["MAE", "RMSE", "R2"], help="Metric to sort results by")
@@ -154,6 +189,7 @@ def main() -> None:
         help="Write validation predictions to a new CSV (use results/); creates parents, refuses existing files",
     )
     args = parser.parse_args()
+    args.input = args.input or [["rdkit"]]
 
     if not 0.0 < args.val_split < 1.0:
         print(f"--val-split must be in (0, 1), got {args.val_split}", file=sys.stderr)
@@ -179,6 +215,8 @@ def main() -> None:
 
     results: list[tuple[str, str, str, dict[str, float]]] = []
     prediction_rows: list[dict[str, object]] = []
+    # target -> (model, input) -> {val row index: prediction}
+    corr_preds: dict[str, dict[tuple[str, str], dict[int, float]]] = {}
     for input_names in input_sets:
         input_label = " + ".join(input_names)
         # Features don't depend on the target isoform, so compute once and reuse across isoforms.
@@ -190,21 +228,27 @@ def main() -> None:
             X_val, y_val, val_mask = drop_nan_rows(
                 val_features, val_df[target].to_numpy(), label=f"val/{label}", return_mask=True,
             )
+            val_index = np.flatnonzero(val_mask)
             if args.predictions_out is not None:
                 val_smiles = val_df["SMILES"].to_numpy()[val_mask]
             for cls in model_classes:
-                if args.predictions_out is None:
+                if args.predictions_out is None and not args.correlation:
                     metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
                 else:
                     metrics, predictions = _evaluate_model(
                         cls(), X_train, y_train, X_val, y_val, return_predictions=True,
                     )
-                    prediction_rows.extend(
-                        dict(zip(_PREDICTION_COLUMNS, (
-                            smiles, target, cls.name, input_label, args.split, args.seed, float(actual), float(pred),
-                        )))
-                        for smiles, actual, pred in zip(val_smiles, y_val, predictions)
-                    )
+                    if args.correlation:
+                        corr_preds.setdefault(target, {})[(cls.name, input_label)] = dict(
+                            zip(val_index.tolist(), predictions.tolist())
+                        )
+                    if args.predictions_out is not None:
+                        prediction_rows.extend(
+                            dict(zip(_PREDICTION_COLUMNS, (
+                                smiles, target, cls.name, input_label, args.split, args.seed, float(actual), float(pred),
+                            )))
+                            for smiles, actual, pred in zip(val_smiles, y_val, predictions)
+                        )
                 results.append((target, cls.name, input_label, metrics))
 
     if args.predictions_out is not None:
@@ -217,8 +261,14 @@ def main() -> None:
 
     reverse = args.sort_by == "R2"
     results.sort(key=lambda r: (r[0], -r[3][args.sort_by] if reverse else r[3][args.sort_by]))
-    print(f"isoform-mode={args.isoform_mode}  input={' + '.join(args.input)}  split={args.split}  seed={args.seed}")
+    print(f"isoform-mode={args.isoform_mode}  input={' | '.join(' + '.join(g) for g in args.input)}  split={args.split}  seed={args.seed}")
     _print_results(results)
+    if args.correlation:
+        for target, preds in corr_preds.items():
+            if len(preds) < 2:
+                print(f"\n--correlation needs at least two (model, input) combinations; got {len(preds)}", file=sys.stderr)
+                break
+            _print_correlations(target, preds)
 
 
 if __name__ == "__main__":
