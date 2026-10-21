@@ -27,6 +27,7 @@ head-search = "models.head_search:main"
 motif-report = "data_tools.motif_report:main"
 write-descriptors = "data_tools.descriptors_out:main"
 dataset-similarity = "data_tools.dataset_similarity:main"
+representations = "data_tools.representations_cli:main"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
