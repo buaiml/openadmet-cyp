@@ -237,9 +237,9 @@ def main() -> None:
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation fraction")
     parser.add_argument(
         "--split",
-        default="random",
+        default="scaffold",
         choices=["random", "scaffold", "butina"],
-        help="Train/val split strategy (default: random)",
+        help="Train/val split strategy (default: scaffold)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for splitting")
     parser.add_argument(
