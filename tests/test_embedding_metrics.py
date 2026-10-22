@@ -119,3 +119,13 @@ def test_evaluate_embedding_skips_a_target_with_too_few_labels():
         X[:90], X[90:], {"t": sparse[:90]}, {"t": sparse[90:]}, fp[:90], fp[90:], max_samples=100, seed=0,
     )
     assert np.isnan(out["probe_r2"])
+
+
+def test_evaluate_shift_needs_no_labels_and_flags_a_shifted_set():
+    train = _blobs(500, 10, 0, 0)
+    same = em.evaluate_shift(train, _blobs(250, 10, 0, 1), max_samples=300, seed=0)
+    far = em.evaluate_shift(train, _blobs(250, 10, 3, 2), max_samples=300, seed=0)
+    assert {"nn_ratio", "frac_out", "two_sample_auc", "mmd_p"} <= set(same)
+    assert same["two_sample_auc"] < 0.65 < 0.95 < far["two_sample_auc"]
+    assert far["nn_ratio"] > same["nn_ratio"]
+    assert far["mmd_p"] < 0.05

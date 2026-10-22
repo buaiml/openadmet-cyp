@@ -14,7 +14,7 @@ from rich.table import Table
 
 from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 from data_tools.load import load_data, load_test, load_train
-from representations.embedding_metrics import evaluate_embedding, fingerprint_shift
+from representations.embedding_metrics import evaluate_embedding, evaluate_shift, fingerprint_shift
 from representations.foundation_alias import ALIAS_FILE, set_alias
 
 console = Console()
@@ -83,9 +83,10 @@ _METRIC_LEGEND = (
     "Recall: overlap of embedding and Morgan-Tanimoto 10-NN (higher better). "
     "EffRank: effective rank, low means collapse. "
     "Rough: 1-NN label difference over random-pair difference (lower smoother, <1 is locality). "
-    "NN ratio: median val->train NN distance over train leave-one-out (1.0 = val looks like train). "
-    "Out: share of val beyond the train 95th-percentile NN distance (0.05 = like train). "
-    "AUC: train-vs-val classifier AUROC (0.5 = indistinguishable). "
+    "NN ratio: median held-out->train NN distance over train leave-one-out (1.0 = looks like train, "
+    "below 1 = closer to train than train is to itself). "
+    "Out: share of the held-out set beyond the train 95th-percentile NN distance (0.05 = like train). "
+    "AUC: train-vs-held-out classifier AUROC (0.5 = indistinguishable). "
     "MMD p: permutation p-value, small = distributions differ. "
     "Err rho: Spearman of val NN distance vs probe error (positive = distance predicts failure)."
 )
@@ -134,7 +135,16 @@ def _evaluate(args: argparse.Namespace) -> None:
     y_train_all = {t: train_df[t].cast(pl.Float64).to_numpy() for t in targets}
     y_val_all = {t: val_df[t].cast(pl.Float64).to_numpy() for t in targets}
 
+    if args.test:
+        # the model that is submitted trains on all of train.csv, so the test set is measured against all of it
+        full_df = pl.concat([train_df, val_df])
+        test_df = load_test(args.data_dir / "test.csv")
+        fp_full_all = featurize(full_df, [_BASELINE], args.cache_dir)
+        fp_test_all = featurize(test_df, [_BASELINE], args.cache_dir)
+        console.print(f"[dim]test: {len(test_df)} molecules against all {len(full_df)} train.csv molecules[/]")
+
     rows: list[tuple[str, dict[str, float]]] = []
+    test_rows: list[tuple[str, dict[str, float]]] = []
     baseline_shown = False
     for name in names:
         try:
@@ -160,29 +170,47 @@ def _evaluate(args: argparse.Namespace) -> None:
                 max_samples=args.max_samples,
                 seed=args.seed,
             )
+            if args.test:
+                X_full_all = featurize(full_df, [name], args.cache_dir)
+                X_test_all = featurize(test_df, [name], args.cache_dir)
+                full = _finite_rows(X_full_all, fp_full_all)
+                tst = _finite_rows(X_test_all, fp_test_all)
+                if full.sum() < 20 or tst.sum() < 20:
+                    raise ValueError(f"only {full.sum()} train / {tst.sum()} test molecules have finite features")
+                if not test_rows:
+                    base, _ = fingerprint_shift(fp_full_all[full].astype(np.uint8), fp_test_all[tst].astype(np.uint8))
+                    test_rows.append((f"{_BASELINE} Tanimoto (baseline)", base))
+                test_metrics = evaluate_shift(
+                    X_full_all[full], X_test_all[tst], max_samples=args.max_samples, seed=args.seed,
+                )
+                test_dropped = int((~tst).sum())
+                test_rows.append((name + (f" (-{test_dropped} non-finite)" if test_dropped else ""), test_metrics))
         except Exception as exc:  # one failing representation should not stop the rest
             print(f"[{name}] failed: {exc}", file=sys.stderr)
             continue
         dropped = int((~tr).sum() + (~va).sum())
         rows.append((name + (f" (-{dropped} non-finite)" if dropped else ""), metrics))
 
-    # two tables so each fits an 80-column terminal without squeezing the names
+    # separate tables so each fits an 80-column terminal without squeezing the names
+    shift_columns = [("NN ratio", "nn_ratio", 2), ("Out", "frac_out", 3), ("AUC", "two_sample_auc", 3), ("MMD p", "mmd_p", 3)]
     groups = {
-        "Embedding quality": [
-            ("Dim", "dim", 0), ("Probe R2", "probe_r2", 3), ("kNN R2", "knn_r2", 3),
-            ("Recall", "recall@10", 3), ("EffRank", "eff_rank", 1), ("Rough", "roughness", 3),
-        ],
-        "Train to val distance": [
-            ("NN ratio", "nn_ratio", 2), ("Out", "frac_out", 3), ("AUC", "two_sample_auc", 3),
-            ("MMD p", "mmd_p", 3), ("Err rho", "err_dist_rho", 3),
-        ],
+        "Embedding quality": (
+            [
+                ("Dim", "dim", 0), ("Probe R2", "probe_r2", 3), ("kNN R2", "knn_r2", 3),
+                ("Recall", "recall@10", 3), ("EffRank", "eff_rank", 1), ("Rough", "roughness", 3),
+            ],
+            rows,
+        ),
+        "Train to val distance": ([*shift_columns, ("Err rho", "err_dist_rho", 3)], rows),
     }
-    for title, columns in groups.items():
+    if args.test:
+        groups["Train to test distance (test.csv vs all of train.csv)"] = (shift_columns, test_rows)
+    for title, (columns, group_rows) in groups.items():
         table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", pad_edge=False, title=title, title_style="bold")
         table.add_column("Representation", style="bold", overflow="fold", min_width=12)
         for header, _, _ in columns:
             table.add_column(header, justify="right", no_wrap=True)
-        for label, m in rows:
+        for label, m in group_rows:
             is_baseline = label.endswith("(baseline)")
             table.add_row(
                 f"[dim]{escape(label)}[/]" if is_baseline else escape(label),
@@ -204,6 +232,12 @@ def main() -> None:
         help="Score these representations (a registered name, chemprop[/path/to/weights], or 'all') on a "
         "train/val split: probe and kNN R2, Tanimoto-neighbour recall, effective rank, roughness, "
         "train-to-val NN distance, train-vs-val AUC, MMD, and error vs distance. Uses the cache, computing what is missing.",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="With --evaluate, also measure the blinded data/test.csv against all of train.csv "
+        "(distance metrics only: NN ratio, Out, AUC, MMD p; no labels are needed)",
     )
     parser.add_argument("--split", default="scaffold", choices=["random", "scaffold", "butina"], help="Split for --evaluate (default: scaffold)")
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation fraction for --evaluate")
@@ -235,6 +269,8 @@ def main() -> None:
 
     if not args.check and not args.embed and not args.alias and not args.evaluate:
         parser.error("pass --check, --embed, --alias and/or --evaluate")
+    if args.test and not args.evaluate:
+        parser.error("--test only applies with --evaluate")
     if args.evaluate and not 0.0 < args.val_split < 1.0:
         parser.error(f"--val-split must be in (0, 1), got {args.val_split}")
 

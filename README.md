@@ -151,8 +151,14 @@ two tables; label metrics are averaged over the targets that have data.
 | RBF MMD permutation p-value | MMD p | small means the distributions differ |
 | Spearman of val NN distance vs probe error | Err rho | positive means distance predicts failure |
 
-The first row of the distance table is the same NN ratio and Out measured on
-Morgan Tanimoto, the baseline for how hard the split is on its own. Features are
+The first row of each distance table is the same NN ratio and Out measured on
+Morgan Tanimoto, the baseline for how hard the split is on its own.
+
+`--test` adds a third table that measures the blinded `data/test.csv` against all
+of `train.csv` with the label-free metrics (NN ratio, Out, AUC, MMD p), so the
+real test shift can be compared with the validation shift. NN ratio below 1 means
+test sits closer to train than train does to itself, while a high AUC with it
+means test is still a different distribution. Features are
 standardized with train statistics first, and the pairwise metrics subsample to
 `--max-samples` molecules.
 
