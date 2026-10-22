@@ -13,6 +13,7 @@ from rich.table import Table
 from data_tools.inputs import featurize
 from data_tools.representations_cli import _molecules
 from representations.chemprop_weights import cache_name
+from representations.foundation_alias import ensure_aliases
 
 DEFAULT_HOME = Path("results/chemprop")
 HOME_ENV = "FOUNDATION_MODEL_HOME"
@@ -55,12 +56,18 @@ def _print_models(home: Path, models: list[tuple[str, list[Path]]]) -> None:
     console.print(table)
 
 
-def _print_paths(models: list[tuple[str, list[Path]]]) -> None:
-    """Print each model's per-seed weights paths as plain lines, ready to paste into `--input chemprop[...]`."""
+def _assign_aliases(models: list[tuple[str, list[Path]]]) -> dict[str, str]:
+    """Alias every seed's weights path that has none yet (e.g. grid/admet_chemeleon seed0 -> grid_admet_chemeleon_seed0)."""
+    entries = [(w, f"{name}_{w.parent.parent.name}") for name, weights in models for w in weights]
+    return ensure_aliases(entries)
+
+
+def _print_paths(models: list[tuple[str, list[Path]]], aliases: dict[str, str]) -> None:
+    """Print each model's per-seed weights paths and aliases, ready to paste into `--input chemprop[...]`."""
     for name, weights in models:
         print(name)
         for w in weights:
-            print(f"  {w}" + ("" if w.is_file() else "  (missing)"))
+            print(f"  {w}  [{aliases[str(w.resolve())]}]" + ("" if w.is_file() else "  (missing)"))
 
 
 def _generate_caches(models: list[tuple[str, list[Path]]], data_dir: Path, cache_dir: Path) -> None:
@@ -117,10 +124,11 @@ def main() -> None:
     if not models:
         print(f"No models found in {home}", file=sys.stderr)
         sys.exit(1)
+    aliases = _assign_aliases(models)
     if args.generate_cache:
         _generate_caches(models, args.data_dir, args.cache_dir)
     elif args.paths:
-        _print_paths(models)
+        _print_paths(models, aliases)
     else:
         _print_models(home, models)
 

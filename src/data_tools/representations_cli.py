@@ -14,6 +14,7 @@ from rich.table import Table
 
 from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 from data_tools.load import load_test, load_train
+from representations.foundation_alias import ALIAS_FILE, set_alias
 
 console = Console()
 
@@ -85,12 +86,28 @@ def main() -> None:
         help="Compute and cache these representations for the train and test molecules "
         "(a registered name, chemprop[/path/to/weights], or 'all'). Only uncached molecules are computed.",
     )
+    parser.add_argument(
+        "--alias",
+        nargs=2,
+        metavar=("PATH", "ALIAS"),
+        help=f"Give a foundation-model weights path a short alias, usable as chemprop[ALIAS]. Saved in {ALIAS_FILE}.",
+    )
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Directory containing train.csv and test.csv")
     parser.add_argument("--cache-dir", type=Path, default=Path("data/features"), help="Directory for cached feature matrices")
     args = parser.parse_args()
 
-    if not args.check and not args.embed:
-        parser.error("pass --check and/or --embed")
+    if not args.check and not args.embed and not args.alias:
+        parser.error("pass --check, --embed and/or --alias")
+
+    if args.alias:
+        path, alias = args.alias
+        if not Path(path).expanduser().is_file():
+            print(f"Warning: {path} does not exist (alias saved anyway)", file=sys.stderr)
+        try:
+            set_alias(path, alias)
+        except ValueError as exc:
+            parser.error(str(exc))
+        console.print(f"[green]✓[/] {escape(f'chemprop[{alias}]')} -> {escape(str(Path(path).expanduser().resolve()))}", soft_wrap=True)
 
     if args.embed:
         names = list(INPUT_REGISTRY) if args.embed == ["all"] else args.embed
