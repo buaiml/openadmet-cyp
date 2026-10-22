@@ -219,6 +219,40 @@ def spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(stats.spearmanr(a, b).statistic)
 
 
+def shift_metrics(
+    Z_train: np.ndarray,
+    Z_other: np.ndarray,
+    *,
+    max_samples: int = 3000,
+    seed: int = 0,
+) -> tuple[dict[str, float], np.ndarray]:
+    """Label-free distance metrics of one set against train, and that set's per-molecule NN distance.
+
+    Z_* are already standardized with the train statistics. Works for any held-out set,
+    including the blinded test molecules, since it never reads a label.
+    """
+    rng = np.random.default_rng(seed)
+    d_other, d_train = nn_distances(Z_train, Z_other)
+    out = shift_stats(d_other, d_train)
+    tr_rows = subsample(len(Z_train), max_samples, rng)
+    other_rows = subsample(len(Z_other), max_samples, rng)
+    out["two_sample_auc"] = two_sample_auc(Z_train[tr_rows], Z_other[other_rows], seed)
+    out["mmd"], out["mmd_p"] = mmd_rbf(Z_train, Z_other, seed)
+    return out, d_other
+
+
+def evaluate_shift(
+    X_train: np.ndarray,
+    X_other: np.ndarray,
+    *,
+    max_samples: int = 3000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """shift_metrics on raw feature matrices, standardizing with the train statistics."""
+    Z_train, Z_other = standardize(X_train, X_other)
+    return shift_metrics(Z_train, Z_other, max_samples=max_samples, seed=seed)[0]
+
+
 def evaluate_embedding(
     X_train: np.ndarray,
     X_val: np.ndarray,
@@ -240,19 +274,16 @@ def evaluate_embedding(
     rng = np.random.default_rng(seed)
     Z_train, Z_val = standardize(X_train, X_val)
 
-    d_val, d_train = nn_distances(Z_train, Z_val)
     out: dict[str, float] = {"dim": float(X_train.shape[1])}
-    out.update(shift_stats(d_val, d_train))
+    shift, d_val = shift_metrics(Z_train, Z_val, max_samples=max_samples, seed=seed)
+    out.update(shift)
 
     pool = np.vstack([Z_train, Z_val])
     rank_rows = subsample(len(pool), max_samples, rng)
     out["eff_rank"] = effective_rank(pool[rank_rows])
 
     tr_rows = subsample(len(Z_train), max_samples, rng)
-    va_rows = subsample(len(Z_val), max_samples, rng)
     out[f"recall@{recall_k}"] = neighbour_recall(Z_train[tr_rows], fp_train[tr_rows], recall_k)
-    out["two_sample_auc"] = two_sample_auc(Z_train[tr_rows], Z_val[va_rows], seed)
-    out["mmd"], out["mmd_p"] = mmd_rbf(Z_train, Z_val, seed)
 
     per_target: dict[str, list[float]] = {"probe_r2": [], "knn_r2": [], "roughness": [], "err_dist_rho": []}
     for target, y_tr_all in y_train.items():
