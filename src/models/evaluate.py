@@ -26,6 +26,8 @@ _CYP_TARGETS = [
     "CYP3A4_pIC50_direct_inhibition",
 ]
 
+_ISOFORMS = {t.split("_")[0].removeprefix("CYP"): t for t in _CYP_TARGETS}
+
 console = Console()
 
 _PREDICTION_COLUMNS = ["smiles", "isoform", "model", "input", "split", "seed", "y_true", "y_pred"]
@@ -248,18 +250,19 @@ def main() -> None:
     )
     parser.add_argument("--models", nargs="+", default=["all"], help="Model names to evaluate, or 'all'")
     parser.add_argument(
-        "--isoform-mode",
-        default="separate",
-        choices=["separate"],
-        help="How to handle the 4 CYP isoforms. 'separate' (default): fit and evaluate an "
-        "independent model per isoform, sharing one feature matrix.",
-    )
-    parser.add_argument(
         "--targets",
         nargs="+",
-        default=_CYP_TARGETS,
+        default=None,
         choices=_CYP_TARGETS,
         help="CYP target column(s) to evaluate (default: all four isoforms)",
+    )
+    parser.add_argument(
+        "--isoforms",
+        nargs="+",
+        default=None,
+        choices=list(_ISOFORMS),
+        help="Shorthand for --targets: isoform(s) to evaluate, direct inhibition pIC50 only "
+        f"(e.g. --isoforms 3A4 2D6). Choices: {list(_ISOFORMS)}",
     )
     parser.add_argument(
         "--input",
@@ -283,6 +286,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     args.input = args.input or [["rdkit"]]
+
+    if args.targets is not None and args.isoforms is not None:
+        parser.error("--targets and --isoforms are mutually exclusive")
+    if args.isoforms is not None:
+        args.targets = [_ISOFORMS[i] for i in args.isoforms]
+    elif args.targets is None:
+        args.targets = _CYP_TARGETS
 
     if not 0.0 < args.val_split < 1.0:
         print(f"--val-split must be in (0, 1), got {args.val_split}", file=sys.stderr)
@@ -325,11 +335,12 @@ def main() -> None:
             if args.predictions_out is not None:
                 val_smiles = val_df["SMILES"].to_numpy()[val_mask]
             for cls in model_classes:
+                model = cls()
                 if args.predictions_out is None and not args.correlation:
-                    metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+                    metrics = _evaluate_model(model, X_train, y_train, X_val, y_val)
                 else:
                     metrics, predictions = _evaluate_model(
-                        cls(), X_train, y_train, X_val, y_val, return_predictions=True,
+                        model, X_train, y_train, X_val, y_val, return_predictions=True,
                     )
                     if args.correlation:
                         corr_preds.setdefault(target, {})[(cls.name, input_label)] = dict(
@@ -360,7 +371,7 @@ def main() -> None:
 
     results.sort(key=_sort_key)
     console.print(
-        f"[dim]isoform-mode[/]={args.isoform_mode}  [dim]input[/]="
+        f"[dim]input[/]="
         + escape(_short(" | ".join(" + ".join(g) for g in args.input)))
         + f"  [dim]split[/]={args.split}  [dim]seed[/]={args.seed}"
     )
