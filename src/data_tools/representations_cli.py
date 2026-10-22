@@ -134,6 +134,9 @@ def _evaluate(args: argparse.Namespace) -> None:
     y_train_all = {t: train_df[t].cast(pl.Float64).to_numpy() for t in targets}
     y_val_all = {t: val_df[t].cast(pl.Float64).to_numpy() for t in targets}
 
+    if args.test and not (args.data_dir / "test.csv").exists():
+        print(f"{args.data_dir / 'test.csv'} not found, skipping the test distances (use --no-test to silence)", file=sys.stderr)
+        args.test = False
     if args.test:
         # the model that is submitted trains on all of train.csv, so the test set is measured against all of it
         full_df = pl.concat([train_df, val_df])
@@ -234,9 +237,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--test",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="With --evaluate, also measure the blinded data/test.csv against all of train.csv "
-        "(distance metrics only: NN ratio, Out, AUC, MMD p; no labels are needed)",
+        "(distance metrics only: NN ratio, Out, AUC, MMD p; no labels are needed). Default on; --no-test skips it",
     )
     parser.add_argument("--split", default="scaffold", choices=["random", "scaffold", "butina"], help="Split for --evaluate (default: scaffold)")
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation fraction for --evaluate")
@@ -262,8 +266,6 @@ def main() -> None:
 
     if not args.check and not args.embed and not args.evaluate:
         parser.error("pass --check, --embed and/or --evaluate")
-    if args.test and not args.evaluate:
-        parser.error("--test only applies with --evaluate")
     if args.evaluate and not 0.0 < args.val_split < 1.0:
         parser.error(f"--val-split must be in (0, 1), got {args.val_split}")
 
