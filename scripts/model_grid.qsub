@@ -12,6 +12,7 @@ module load miniconda
 conda activate cyp
 
 export PYTHONNOUSERSITE=1      # don't let ~/.local packages shadow the conda env
+export CHEMPROP_HOME='.chemeleon'
 cd "$SGE_O_WORKDIR"
 
 # Finished runs are skipped, so a job that hits h_rt can just be resubmitted.
