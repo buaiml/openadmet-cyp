@@ -10,6 +10,10 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from data_tools.inputs import featurize
+from data_tools.representations_cli import _molecules
+from representations.chemprop_weights import cache_name
+
 DEFAULT_HOME = Path("results/chemprop")
 HOME_ENV = "FOUNDATION_MODEL_HOME"
 
@@ -59,6 +63,32 @@ def _print_paths(models: list[tuple[str, list[Path]]]) -> None:
             print(f"  {w}" + ("" if w.is_file() else "  (missing)"))
 
 
+def _generate_caches(models: list[tuple[str, list[Path]]], data_dir: Path, cache_dir: Path) -> None:
+    """Embed the train+test molecules with every seed's weights that has no feature cache yet.
+
+    Seeds without a best.pt are skipped; a seed whose cache files exist is left untouched.
+    """
+    molecules = None
+    generated = 0
+    for name, weights in models:
+        for path in weights:
+            label = f"{name}/{path.parent.parent.name}"
+            if not path.is_file():
+                print(f"{label}: no weights, skipped")
+                continue
+            spec = f"chemprop[{path}]"
+            stem = cache_dir / cache_name(spec)
+            if stem.with_suffix(".npy").exists() and stem.with_suffix(".idx").exists():
+                print(f"{label}: cached")
+                continue
+            if molecules is None:
+                molecules = _molecules(data_dir)
+            print(f"{label}: generating cache for {len(molecules)} molecules")
+            featurize(molecules, [spec], cache_dir)
+            generated += 1
+    print(f"Generated {generated} cache(s) in {cache_dir}")
+
+
 def main() -> None:
     """Entry point for the foundation-model CLI."""
     parser = argparse.ArgumentParser(
@@ -66,9 +96,16 @@ def main() -> None:
     )
     parser.add_argument("--list", action="store_true", help="List the available models with their seed counts")
     parser.add_argument("--paths", action="store_true", help="Show each model's per-seed best.pt path instead of the seed count")
+    parser.add_argument(
+        "--generate-cache",
+        action="store_true",
+        help="Generate the feature cache (train+test molecules) for every seed that doesn't have one",
+    )
+    parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Directory containing train.csv and test.csv")
+    parser.add_argument("--cache-dir", type=Path, default=Path("data/features"), help="Directory for cached feature matrices")
     args = parser.parse_args()
 
-    if not (args.list or args.paths):
+    if not (args.list or args.paths or args.generate_cache):
         parser.print_help()
         return
 
@@ -80,7 +117,9 @@ def main() -> None:
     if not models:
         print(f"No models found in {home}", file=sys.stderr)
         sys.exit(1)
-    if args.paths:
+    if args.generate_cache:
+        _generate_caches(models, args.data_dir, args.cache_dir)
+    elif args.paths:
         _print_paths(models)
     else:
         _print_models(home, models)
