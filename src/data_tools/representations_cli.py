@@ -13,7 +13,8 @@ from rich.markup import escape
 from rich.table import Table
 
 from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
-from data_tools.load import load_test, load_train
+from data_tools.load import load_data, load_test, load_train
+from representations.embedding_metrics import evaluate_embedding, fingerprint_shift
 from representations.foundation_alias import ALIAS_FILE, set_alias
 
 console = Console()
@@ -75,10 +76,146 @@ def _check(cache_dir: Path, smiles: set[str] | None) -> None:
     console.print(table)
 
 
+_TARGET_SUFFIX = "_pIC50_direct_inhibition"
+_BASELINE = "morgan"
+_METRIC_LEGEND = (
+    "Probe/kNN R2: val R2 of ridge / 5-NN on the embedding (higher better). "
+    "Recall: overlap of embedding and Morgan-Tanimoto 10-NN (higher better). "
+    "EffRank: effective rank, low means collapse. "
+    "Rough: 1-NN label difference over random-pair difference (lower smoother, <1 is locality). "
+    "NN ratio: median val->train NN distance over train leave-one-out (1.0 = val looks like train). "
+    "Out: share of val beyond the train 95th-percentile NN distance (0.05 = like train). "
+    "AUC: train-vs-val classifier AUROC (0.5 = indistinguishable). "
+    "MMD p: permutation p-value, small = distributions differ. "
+    "Err rho: Spearman of val NN distance vs probe error (positive = distance predicts failure)."
+)
+
+
+def _finite_rows(*arrays: np.ndarray) -> np.ndarray:
+    mask = np.ones(len(arrays[0]), dtype=bool)
+    for a in arrays:
+        mask &= np.isfinite(a).all(axis=1)
+    return mask
+
+
+def _fmt(value: float, digits: int = 3) -> str:
+    return "[dim]n/a[/]" if value is None or not np.isfinite(value) else f"{value:.{digits}f}"
+
+
+def _evaluate(args: argparse.Namespace) -> None:
+    """Score embeddings on a train/val split: embedding quality plus train-to-val distance."""
+    names = list(INPUT_REGISTRY) if args.evaluate == ["all"] else args.evaluate
+    unknown = [n for n in names if not is_known_input(n)]
+    if unknown:
+        print(f"Unknown representation(s): {unknown}. Available: {list(INPUT_REGISTRY)} or chemprop[/path]", file=sys.stderr)
+        sys.exit(1)
+
+    train_df, val_df = load_data(
+        split_type=args.split,
+        val_fraction=args.val_split,
+        seed=args.seed,
+        butina_cutoff=args.butina_cutoff,
+        data_dir=args.data_dir,
+    )
+    targets = [c for c in train_df.columns if c.endswith(_TARGET_SUFFIX)]
+    if args.targets:
+        missing = [t for t in args.targets if t not in targets]
+        if missing:
+            print(f"Unknown target(s): {missing}. Available: {targets}", file=sys.stderr)
+            sys.exit(1)
+        targets = args.targets
+    console.print(
+        f"[dim]split[/]={args.split}  [dim]seed[/]={args.seed}  "
+        f"[dim]{len(train_df)} train / {len(val_df)} val molecules[/]  [dim]targets[/]={len(targets)}"
+    )
+
+    fp_train_all = featurize(train_df, [_BASELINE], args.cache_dir)
+    fp_val_all = featurize(val_df, [_BASELINE], args.cache_dir)
+    y_train_all = {t: train_df[t].cast(pl.Float64).to_numpy() for t in targets}
+    y_val_all = {t: val_df[t].cast(pl.Float64).to_numpy() for t in targets}
+
+    rows: list[tuple[str, dict[str, float]]] = []
+    baseline_shown = False
+    for name in names:
+        try:
+            X_train_all = featurize(train_df, [name], args.cache_dir)
+            X_val_all = featurize(val_df, [name], args.cache_dir)
+            tr = _finite_rows(X_train_all, fp_train_all)
+            va = _finite_rows(X_val_all, fp_val_all)
+            if tr.sum() < 20 or va.sum() < 20:
+                raise ValueError(f"only {tr.sum()} train / {va.sum()} val molecules have finite features")
+            fp_train = fp_train_all[tr].astype(np.uint8)
+            fp_val = fp_val_all[va].astype(np.uint8)
+            if not baseline_shown:
+                base, _ = fingerprint_shift(fp_train, fp_val)
+                rows.append((f"{_BASELINE} Tanimoto (baseline)", {"nn_ratio": base["nn_ratio"], "frac_out": base["frac_out"]}))
+                baseline_shown = True
+            metrics = evaluate_embedding(
+                X_train_all[tr],
+                X_val_all[va],
+                {t: y[tr] for t, y in y_train_all.items()},
+                {t: y[va] for t, y in y_val_all.items()},
+                fp_train,
+                fp_val,
+                max_samples=args.max_samples,
+                seed=args.seed,
+            )
+        except Exception as exc:  # one failing representation should not stop the rest
+            print(f"[{name}] failed: {exc}", file=sys.stderr)
+            continue
+        dropped = int((~tr).sum() + (~va).sum())
+        rows.append((name + (f" (-{dropped} non-finite)" if dropped else ""), metrics))
+
+    # two tables so each fits an 80-column terminal without squeezing the names
+    groups = {
+        "Embedding quality": [
+            ("Dim", "dim", 0), ("Probe R2", "probe_r2", 3), ("kNN R2", "knn_r2", 3),
+            ("Recall", "recall@10", 3), ("EffRank", "eff_rank", 1), ("Rough", "roughness", 3),
+        ],
+        "Train to val distance": [
+            ("NN ratio", "nn_ratio", 2), ("Out", "frac_out", 3), ("AUC", "two_sample_auc", 3),
+            ("MMD p", "mmd_p", 3), ("Err rho", "err_dist_rho", 3),
+        ],
+    }
+    for title, columns in groups.items():
+        table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", pad_edge=False, title=title, title_style="bold")
+        table.add_column("Representation", style="bold", overflow="fold", min_width=12)
+        for header, _, _ in columns:
+            table.add_column(header, justify="right", no_wrap=True)
+        for label, m in rows:
+            is_baseline = label.endswith("(baseline)")
+            table.add_row(
+                f"[dim]{escape(label)}[/]" if is_baseline else escape(label),
+                *(_fmt(m.get(key, float("nan")), digits) for _, key, digits in columns),
+            )
+        console.print()
+        console.print(table)
+    console.print(f"\n[dim]{_METRIC_LEGEND}[/]")
+
+
 def main() -> None:
     """Entry point for the representations CLI."""
-    parser = argparse.ArgumentParser(description="Inspect or fill the representation feature cache.")
+    parser = argparse.ArgumentParser(description="Inspect, fill, or evaluate the representation feature cache.")
     parser.add_argument("--check", action="store_true", help="Show which representations are cached and how complete they are")
+    parser.add_argument(
+        "--evaluate",
+        nargs="+",
+        metavar="REPRESENTATION",
+        help="Score these representations (a registered name, chemprop[/path/to/weights], or 'all') on a "
+        "train/val split: probe and kNN R2, Tanimoto-neighbour recall, effective rank, roughness, "
+        "train-to-val NN distance, train-vs-val AUC, MMD, and error vs distance. Uses the cache, computing what is missing.",
+    )
+    parser.add_argument("--split", default="scaffold", choices=["random", "scaffold", "butina"], help="Split for --evaluate (default: scaffold)")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Validation fraction for --evaluate")
+    parser.add_argument("--seed", type=int, default=42, help="Seed for the split and the subsampling in --evaluate")
+    parser.add_argument("--butina-cutoff", type=float, default=0.4, help="Tanimoto distance cutoff for --split butina")
+    parser.add_argument("--targets", nargs="+", help="Label columns for --evaluate (default: every *_pIC50_direct_inhibition)")
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=3000,
+        help="Cap on molecules used by the pairwise metrics (recall, rank, AUC) in --evaluate",
+    )
     parser.add_argument(
         "--embed",
         nargs="+",
@@ -96,8 +233,10 @@ def main() -> None:
     parser.add_argument("--cache-dir", type=Path, default=Path("data/features"), help="Directory for cached feature matrices")
     args = parser.parse_args()
 
-    if not args.check and not args.embed and not args.alias:
-        parser.error("pass --check, --embed and/or --alias")
+    if not args.check and not args.embed and not args.alias and not args.evaluate:
+        parser.error("pass --check, --embed, --alias and/or --evaluate")
+    if args.evaluate and not 0.0 < args.val_split < 1.0:
+        parser.error(f"--val-split must be in (0, 1), got {args.val_split}")
 
     if args.alias:
         path, alias = args.alias
@@ -125,6 +264,9 @@ def main() -> None:
                 continue
             bad = int((~np.isfinite(features)).any(axis=1).sum())
             console.print(f"[green]✓[/] {escape(name)}: {features.shape[1]} dims" + (f", [yellow]{bad} molecules with non-finite values[/]" if bad else ""))
+
+    if args.evaluate:
+        _evaluate(args)
 
     if args.check:
         smiles = set(_molecules(args.data_dir)["SMILES"].to_list()) if (args.data_dir / "train.csv").exists() else None
