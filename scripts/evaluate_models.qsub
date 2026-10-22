@@ -5,11 +5,11 @@
 #$ -o evaluate_models.qlog
 #$ -l h_rt=12:00:00
 #$ -l gpus=1
-#$ -l gpu_c=7.0               # keep: older GPUs lack kernels for our torch build
+#$ -l gpu_c=9.0               # keep: older GPUs lack kernels for our torch build
 #$ -pe omp 4
 
 module load miniconda
-conda activate openadmet-cyp
+conda activate cyp
 
 export PYTHONNOUSERSITE=1      # don't let ~/.local packages shadow the conda env
 cd "$SGE_O_WORKDIR"

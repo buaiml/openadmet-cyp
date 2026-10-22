@@ -7,6 +7,7 @@ import numpy as np
 import polars as pl
 
 from representations.chemeleon import CheMeleon
+from representations.chemprop_weights import ChempropWeights, cache_name, parse_spec
 from representations.rdkit_descriptors import RDKitDescriptors
 from representations.morgan import CountMorganFingerprint, MorganFingerprint
 from representations.maccs import MACCS
@@ -85,6 +86,11 @@ INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
 }
 
 
+def is_known_input(name: str) -> bool:
+    """True for a registered input or a `chemprop[/path/to/weights]` spec."""
+    return name in INPUT_REGISTRY or parse_spec(name) is not None
+
+
 def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.ndarray:
     """Return features for df, computing only molecules not already in the cache.
 
@@ -98,8 +104,10 @@ def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.nda
     """
     smiles_req = df["SMILES"].to_list()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    npy_path = cache_dir / f"{input_name}.npy"
-    idx_path = cache_dir / f"{input_name}.idx"
+    weights = parse_spec(input_name)
+    stem = input_name if weights is None else cache_name(input_name)
+    npy_path = cache_dir / f"{stem}.npy"
+    idx_path = cache_dir / f"{stem}.idx"
 
     if idx_path.exists():
         indexed = idx_path.read_text().splitlines()
@@ -109,7 +117,11 @@ def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.nda
 
     missing = list(dict.fromkeys(s for s in smiles_req if s not in pos))
     if missing:
-        new_features = INPUT_REGISTRY[input_name](pl.DataFrame({"SMILES": missing}))
+        missing_df = pl.DataFrame({"SMILES": missing})
+        if weights is None:
+            new_features = INPUT_REGISTRY[input_name](missing_df)
+        else:
+            new_features = ChempropWeights(weights).transform(missing_df["SMILES"])
         full = np.vstack([np.load(str(npy_path)), new_features]) if npy_path.exists() else new_features
         np.save(str(npy_path), full)
         for s in missing:
@@ -134,8 +146,8 @@ def featurize(
     each from its own cache file.
     """
     names = [input_names] if isinstance(input_names, str) else input_names
-    unknown = [n for n in names if n not in INPUT_REGISTRY]
+    unknown = [n for n in names if not is_known_input(n)]
     if unknown:
-        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())}")
+        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())} or chemprop[/path/to/weights]")
     arrays = [_featurize_one(df, name, cache_dir) for name in names]
     return arrays[0] if len(arrays) == 1 else np.hstack(arrays)

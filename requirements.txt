@@ -11,3 +11,5 @@ mordredcommunity
 xgboost
 tabpfn
 lightgbm
+rich
+scipy
