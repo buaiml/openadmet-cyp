@@ -47,12 +47,18 @@ def list_models(home: Path) -> list[tuple[str, list[Path]]]:
     ]
 
 
+def _short_names(models: list[tuple[str, list[Path]]]) -> list[str]:
+    """Model names without the path prefix shared by all models."""
+    shared = len(Path(os.path.commonpath([str(Path(name).parent) for name, _ in models])).parts)
+    return ["_".join(Path(name).parts[shared:]) for name, _ in models]
+
+
 def _print_models(home: Path, models: list[tuple[str, list[Path]]], aliases: dict[str, str]) -> None:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title=str(home), title_style="bold")
-    table.add_column("Model", style="bold", no_wrap=True)
+    table.add_column("Model", style="bold", no_wrap=True, max_width=_MODEL_CHARS, overflow="ellipsis")
     table.add_column("Seeds", justify="right")
     table.add_column("Aliases", overflow="fold")
-    for name, weights in models:
+    for name, (_, weights) in zip(_short_names(models), models):
         trained = sum(w.is_file() for w in weights)
         seeds = str(len(weights)) if trained == len(weights) else f"[yellow]{trained}/{len(weights)}[/] [dim]trained[/]"
         table.add_row(name, seeds, escape(", ".join(aliases[str(w.resolve())] for w in weights)))
@@ -65,10 +71,9 @@ def _assign_aliases(models: list[tuple[str, list[Path]]]) -> dict[str, str]:
     The path prefix shared by all models is dropped, and the model name is truncated to _MODEL_CHARS characters.
     Models that truncate to the same name get a numeric suffix from ensure_aliases.
     """
-    shared = len(Path(os.path.commonpath([str(Path(name).parent) for name, _ in models])).parts) if models else 0
     entries = []
-    for name, weights in models:
-        model = "_".join(Path(name).parts[shared:])[:_MODEL_CHARS].rstrip("_+.-")
+    for short, (_, weights) in zip(_short_names(models), models):
+        model = short[:_MODEL_CHARS].rstrip("_+.-")
         for w in weights:
             entries.append((w, f"{model}_{w.parent.parent.name.removeprefix('seed')}"))
     return ensure_aliases(entries)
