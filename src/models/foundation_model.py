@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from data_tools.inputs import featurize
@@ -45,14 +46,15 @@ def list_models(home: Path) -> list[tuple[str, list[Path]]]:
     ]
 
 
-def _print_models(home: Path, models: list[tuple[str, list[Path]]]) -> None:
+def _print_models(home: Path, models: list[tuple[str, list[Path]]], aliases: dict[str, str]) -> None:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title=str(home), title_style="bold")
     table.add_column("Model", style="bold", no_wrap=True)
     table.add_column("Seeds", justify="right")
+    table.add_column("Aliases", overflow="fold")
     for name, weights in models:
         trained = sum(w.is_file() for w in weights)
         seeds = str(len(weights)) if trained == len(weights) else f"[yellow]{trained}/{len(weights)}[/] [dim]trained[/]"
-        table.add_row(name, seeds)
+        table.add_row(name, seeds, escape(", ".join(aliases[str(w.resolve())] for w in weights)))
     console.print(table)
 
 
@@ -130,7 +132,7 @@ def main() -> None:
     elif args.paths:
         _print_paths(models, aliases)
     else:
-        _print_models(home, models)
+        _print_models(home, models, aliases)
 
 
 if __name__ == "__main__":
