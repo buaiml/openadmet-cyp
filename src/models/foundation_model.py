@@ -18,7 +18,7 @@ from representations.foundation_alias import ensure_aliases
 
 DEFAULT_HOME = Path("results/chemprop")
 HOME_ENV = "FOUNDATION_MODEL_HOME"
-_MAX_ALIAS = 16
+_MODEL_CHARS = 10
 
 console = Console()
 
@@ -62,20 +62,15 @@ def _print_models(home: Path, models: list[tuple[str, list[Path]]], aliases: dic
 def _assign_aliases(models: list[tuple[str, list[Path]]]) -> dict[str, str]:
     """Alias every seed's weights path that has none yet, e.g. grid/admet_chemeleon seed0 -> admet_chemeleon_0.
 
-    The path prefix shared by all models is dropped, and the model name is cut to 4 letters per word when the alias would
-    exceed _MAX_ALIAS characters.
+    The path prefix shared by all models is dropped, and the model name is truncated to _MODEL_CHARS characters.
+    Models that truncate to the same name get a numeric suffix from ensure_aliases.
     """
     shared = len(Path(os.path.commonpath([str(Path(name).parent) for name, _ in models])).parts) if models else 0
     entries = []
     for name, weights in models:
-        model = "_".join(Path(name).parts[shared:])
+        model = "_".join(Path(name).parts[shared:])[:_MODEL_CHARS].rstrip("_+.-")
         for w in weights:
-            seed = w.parent.parent.name.removeprefix("seed")
-            if len(f"{model}_{seed}") > _MAX_ALIAS:
-                model_short = "_".join(word[:4] for word in re.split(r"[_.\-]+", model) if word)
-            else:
-                model_short = model
-            entries.append((w, f"{model_short}_{seed}"))
+            entries.append((w, f"{model}_{w.parent.parent.name.removeprefix('seed')}"))
     return ensure_aliases(entries)
 
 
