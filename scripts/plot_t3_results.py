@@ -2,14 +2,14 @@
 
 Save each evaluator run to a text file, e.g.
 
-    evaluate-models --models ridge xgboost --input rdkit --split scaffold 2>&1 | tee results_rdkit.txt
+    evaluate-models --models ridge xgboost --input rdkit --split scaffold 2>&1 | tee reports/results_rdkit.txt
 
 then, from the repo root with the venv active:
 
-    python scripts/plot_t3_results.py results_rdkit.txt results_morgan.txt
-    python scripts/plot_t3_results.py results_*.txt --union data/union_train.csv --out figures
+    python scripts/plot_t3_results.py reports/results_rdkit.txt reports/results_morgan.txt
+    python scripts/plot_t3_results.py reports/results_*.txt --union data/union_train.csv --out reports
 
-Writes into --out (default: figures/):
+Writes into --out (default: reports/):
     model_rmse_by_isoform.png    RMSE of every model, one panel per isoform
     best_model_r2.png            R^2 of the lowest-RMSE model for each isoform
     data_volume_per_isoform.png  pIC50 labels per isoform and source (needs --union)
@@ -247,14 +247,14 @@ def main():
     )
     parser.add_argument("results", nargs="+", type=Path, help="saved evaluate-models outputs")
     parser.add_argument("--union", type=Path, help="data/union_train.csv (data-volume chart)")
-    parser.add_argument("--out", type=Path, default=Path("figures"), help="output folder")
+    parser.add_argument("--out", type=Path, default=Path("reports"), help="output folder")
     parser.add_argument("--cap", type=float, default=1.3, help="clip RMSE bars above this")
     args = parser.parse_args()
 
     rows, kept = parse(args.results)
     if not rows:
         sys.exit("No result rows found. Save the evaluator's output with "
-                 "`evaluate-models ... 2>&1 | tee results_<name>.txt`.")
+                 "`evaluate-models ... 2>&1 | tee reports/results_<name>.txt`.")
     args.out.mkdir(parents=True, exist_ok=True)
 
     with open(args.out / "t3_results_long.csv", "w", newline="") as f:
