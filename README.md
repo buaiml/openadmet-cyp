@@ -154,9 +154,9 @@ two tables; label metrics are averaged over the targets that have data.
 The first row of each distance table is the same NN ratio and Out measured on
 Morgan Tanimoto, the baseline for how hard the split is on its own.
 
-`--test` adds a third table that measures the blinded `data/test.csv` against all
-of `train.csv` with the label-free metrics (NN ratio, Out, AUC, MMD p), so the
-real test shift can be compared with the validation shift. NN ratio below 1 means
+A third table, on by default (`--no-test` skips it), measures the blinded
+`data/test.csv` against all of `train.csv` with the label-free metrics (NN ratio,
+Out, AUC, MMD p), so the real test shift can be compared with the validation shift. NN ratio below 1 means
 test sits closer to train than train does to itself, while a high AUC with it
 means test is still a different distribution. Features are
 standardized with train statistics first, and the pairwise metrics subsample to
