@@ -21,10 +21,11 @@ def _home() -> Path:
     return Path(os.environ.get(HOME_ENV) or DEFAULT_HOME)
 
 
-def list_models(home: Path) -> list[tuple[str, int, int]]:
-    """Return (name, seeds with a trained best.pt, total seed dirs) for each model under home.
+def list_models(home: Path) -> list[tuple[str, list[Path]]]:
+    """Return (name, weights path of each seed) for each model under home.
 
     A model is any directory (at any depth) holding seed<N> subdirectories; its name is its path relative to home.
+    Seeds are in numeric order, and the path is the seed's model_0/best.pt whether or not it exists yet.
     """
     by_model: dict[Path, list[Path]] = {}
     for path in home.rglob("seed*"):
@@ -33,21 +34,29 @@ def list_models(home: Path) -> list[tuple[str, int, int]]:
     return [
         (
             str(model_dir.relative_to(home)),
-            sum((seed / "model_0" / "best.pt").is_file() for seed in seeds),
-            len(seeds),
+            [seed / "model_0" / "best.pt" for seed in sorted(seeds, key=lambda p: int(p.name.removeprefix("seed")))],
         )
         for model_dir, seeds in sorted(by_model.items())
     ]
 
 
-def _print_models(home: Path, models: list[tuple[str, int, int]]) -> None:
+def _print_models(home: Path, models: list[tuple[str, list[Path]]]) -> None:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title=str(home), title_style="bold")
     table.add_column("Model", style="bold", no_wrap=True)
     table.add_column("Seeds", justify="right")
-    for name, trained, total in models:
-        seeds = str(total) if trained == total else f"[yellow]{trained}/{total}[/] [dim]trained[/]"
+    for name, weights in models:
+        trained = sum(w.is_file() for w in weights)
+        seeds = str(len(weights)) if trained == len(weights) else f"[yellow]{trained}/{len(weights)}[/] [dim]trained[/]"
         table.add_row(name, seeds)
     console.print(table)
+
+
+def _print_paths(models: list[tuple[str, list[Path]]]) -> None:
+    """Print each model's per-seed weights paths as plain lines, ready to paste into `--input chemprop[...]`."""
+    for name, weights in models:
+        print(name)
+        for w in weights:
+            print(f"  {w}" + ("" if w.is_file() else "  (missing)"))
 
 
 def main() -> None:
@@ -56,9 +65,10 @@ def main() -> None:
         description=f"Manage trained foundation models. Looks in ${HOME_ENV}, defaulting to {DEFAULT_HOME}.",
     )
     parser.add_argument("--list", action="store_true", help="List the available models with their seed counts")
+    parser.add_argument("--paths", action="store_true", help="Show each model's per-seed best.pt path instead of the seed count")
     args = parser.parse_args()
 
-    if not args.list:
+    if not (args.list or args.paths):
         parser.print_help()
         return
 
@@ -70,7 +80,10 @@ def main() -> None:
     if not models:
         print(f"No models found in {home}", file=sys.stderr)
         sys.exit(1)
-    _print_models(home, models)
+    if args.paths:
+        _print_paths(models)
+    else:
+        _print_models(home, models)
 
 
 if __name__ == "__main__":
