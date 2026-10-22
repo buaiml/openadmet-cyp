@@ -132,6 +132,30 @@ an I/O failure after creation can leave a partial file, which must be removed or
 given a new destination before retrying. Cross-run SMILES inner joins and
 prediction/residual correlations are a separate next task.
 
+### Evaluating an embedding
+
+`representations --evaluate <name>... | all` scores embeddings on a train/val
+split (`--split` default `scaffold`, plus `--val-split`, `--seed`,
+`--butina-cutoff`, `--targets`, `--max-samples`) using the feature cache. It prints
+two tables; label metrics are averaged over the targets that have data.
+
+| Metric | Column | Reads as |
+|---|---|---|
+| ridge probe val R2 | Probe R2 | higher is better |
+| 5-NN regression val R2 | kNN R2 | higher is better |
+| Tanimoto neighbour recall@10 | Recall | embedding 10-NN overlap with Morgan 10-NN |
+| effective rank | EffRank | low means dimensional collapse |
+| roughness (1-NN label diff / random-pair diff) | Rough | below 1 means neighbours share labels |
+| val-to-train NN distance vs train leave-one-out | NN ratio, Out | 1.0 and 0.05 mean val looks like train |
+| train-vs-val classifier AUROC | AUC | 0.5 indistinguishable, 1.0 separable |
+| RBF MMD permutation p-value | MMD p | small means the distributions differ |
+| Spearman of val NN distance vs probe error | Err rho | positive means distance predicts failure |
+
+The first row of the distance table is the same NN ratio and Out measured on
+Morgan Tanimoto, the baseline for how hard the split is on its own. Features are
+standardized with train statistics first, and the pairwise metrics subsample to
+`--max-samples` molecules.
+
 Unparsable SMILES give an all-NaN row, which `evaluate-models` drops. Features
 are cached per representation in `data/features/{name}.npy`, keyed on SMILES, so
 each molecule is featurized once across every split and seed. To add one,
