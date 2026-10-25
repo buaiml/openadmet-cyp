@@ -19,6 +19,8 @@ from representations.cyp_pharmacophore import (
     MechanismBasedAlerts,
 )
 from representations.shape import ShapeDescriptors
+from representations.unimol import UniMol
+
 
 _rdkit = RDKitDescriptors()
 _chemeleon = CheMeleon()
@@ -27,13 +29,18 @@ _count_morgan = CountMorganFingerprint()
 _maccs = MACCS()
 _mordred = MordredDescriptors()
 _shape = ShapeDescriptors()
+_unimol = UniMol()
 _cyp_heme = HemeCoordinationMotifs()
 _cyp_isoform = IsoformPreferenceDescriptors()
 _cyp_tdi = MechanismBasedAlerts()
 _erg = ErGFingerprint()
 
+
 def _shape_features(df: pl.DataFrame) -> np.ndarray:
     return _shape.transform(df["SMILES"])
+
+def _unimol_features(df: pl.DataFrame) -> np.ndarray:
+    return _unimol.transform(df["SMILES"])
 
 def _rdkit_features(df: pl.DataFrame) -> np.ndarray:
     return _rdkit.transform(df["SMILES"])
@@ -82,7 +89,8 @@ INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
     _count_morgan.name: _count_morgan_features,
     _maccs.name: _maccs_features,
     _mordred.name: _mordred_features,
-    "shape": _shape_features,
+    _shape.name: _shape_features,
+    _unimol.name: _unimol_features,
     # --- R2 pharmacophore blocks (append-only; versioned names pin the motif table) ---
     _cyp_heme.name: _cyp_heme_features,
     _cyp_isoform.name: _cyp_isoform_features,

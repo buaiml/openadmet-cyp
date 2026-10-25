@@ -74,3 +74,6 @@ __pycache__/
 # Stray model checkpoints (literal ~ dir)
 /~/
 .chemeleon/
+
+# unimol_tools run logs
+logs/

@@ -13,3 +13,4 @@ tabpfn
 lightgbm
 rich
 scipy
+unimol_tools

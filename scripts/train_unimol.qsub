@@ -1,0 +1,47 @@
+#!/bin/bash -l
+#$ -P your_project_here      # TODO: SCC project allocation (buy-in or class project)
+#$ -N train_unimol
+#$ -j y
+#$ -o train_unimol.qlog
+#$ -l h_rt=48:00:00          # 4 targets x 3 learning rates x 3 seeds = 36 sequential fine-tunes; pad generously
+#$ -l gpus=1
+#$ -l gpu_c=7.0               # min compute capability -- KEEP this; older GPUs lack kernels for
+                               # our torch build (cudaErrorNoKernelImageForDevice). Raise it (e.g.
+                               # 8.0) if the same error recurs, don't drop it.
+#$ -pe omp 4                 # CPU cores for conformer generation/dataloading alongside the GPU
+
+module load miniconda
+conda activate openadmet-cyp   # TODO: adjust to whatever env/venv this repo was installed into
+
+export PYTHONNOUSERSITE=1      # don't let ~/.local packages shadow the conda env
+cd "$SGE_O_WORKDIR"
+export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+
+set -euo pipefail
+
+# Needs a pinned 'split' column (add-split-column), same as head-search.
+DATA_PATH="${DATA_PATH:-data/union_train.csv}"
+
+TARGETS=(
+    CYP1A2_pIC50_direct_inhibition
+    CYP2C9_pIC50_direct_inhibition
+    CYP2D6_pIC50_direct_inhibition
+    CYP3A4_pIC50_direct_inhibition
+)
+LEARNING_RATES=(5e-5 2e-4 5e-4)
+SEEDS=(0 1 2)
+
+for target in "${TARGETS[@]}"; do
+    for lr in "${LEARNING_RATES[@]}"; do
+        for seed in "${SEEDS[@]}"; do
+            echo "=== $target lr=$lr seed=$seed ==="
+            python -m models.train_unimol \
+                --data-path "$DATA_PATH" \
+                --target "$target" \
+                --learning-rate "$lr" \
+                --seed "$seed" \
+                --use-cuda \
+                "$@"
+        done
+    done
+done
