@@ -20,6 +20,8 @@ from representations.cyp_pharmacophore import (
 )
 from representations.shape import ShapeDescriptors
 from representations.unimol import UniMol
+from representations.unimol import cache_name as unimol_cache_name
+from representations.unimol import parse_spec as parse_unimol_spec
 
 
 _rdkit = RDKitDescriptors()
@@ -100,8 +102,8 @@ INPUT_REGISTRY: dict[str, Callable[[pl.DataFrame], np.ndarray]] = {
 
 
 def is_known_input(name: str) -> bool:
-    """True for a registered input or a `chemprop[/path/to/weights]` spec."""
-    return name in INPUT_REGISTRY or parse_spec(name) is not None
+    """True for a registered input or a `chemprop[/path/to/weights]` or `unimol[/path/to/model_0.pth]` spec."""
+    return name in INPUT_REGISTRY or parse_spec(name) is not None or parse_unimol_spec(name) is not None
 
 
 def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.ndarray:
@@ -118,7 +120,13 @@ def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.nda
     smiles_req = df["SMILES"].to_list()
     cache_dir.mkdir(parents=True, exist_ok=True)
     weights = parse_spec(input_name)
-    stem = input_name if weights is None else cache_name(input_name)
+    unimol_weights = parse_unimol_spec(input_name)
+    if weights is not None:
+        stem = cache_name(input_name)
+    elif unimol_weights is not None:
+        stem = unimol_cache_name(input_name)
+    else:
+        stem = input_name
     npy_path = cache_dir / f"{stem}.npy"
     idx_path = cache_dir / f"{stem}.idx"
 
@@ -131,10 +139,12 @@ def _featurize_one(df: pl.DataFrame, input_name: str, cache_dir: Path) -> np.nda
     missing = list(dict.fromkeys(s for s in smiles_req if s not in pos))
     if missing:
         missing_df = pl.DataFrame({"SMILES": missing})
-        if weights is None:
-            new_features = INPUT_REGISTRY[input_name](missing_df)
-        else:
+        if weights is not None:
             new_features = ChempropWeights(weights).transform(missing_df["SMILES"])
+        elif unimol_weights is not None:
+            new_features = UniMol(unimol_weights).transform(missing_df["SMILES"])
+        else:
+            new_features = INPUT_REGISTRY[input_name](missing_df)
         full = np.vstack([np.load(str(npy_path)), new_features]) if npy_path.exists() else new_features
         np.save(str(npy_path), full)
         for s in missing:
@@ -161,6 +171,6 @@ def featurize(
     names = [input_names] if isinstance(input_names, str) else input_names
     unknown = [n for n in names if not is_known_input(n)]
     if unknown:
-        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())} or chemprop[/path/to/weights]")
+        raise ValueError(f"Unknown input(s): {unknown}. Available: {list(INPUT_REGISTRY.keys())} or chemprop[/path/to/weights] or unimol[/path/to/model_0.pth]")
     arrays = [_featurize_one(df, name, cache_dir) for name in names]
     return arrays[0] if len(arrays) == 1 else np.hstack(arrays)

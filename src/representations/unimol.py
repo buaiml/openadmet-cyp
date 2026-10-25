@@ -1,9 +1,14 @@
-"""Frozen Uni-Mol molecular embeddings.
+"""Uni-Mol molecular embeddings.
 
-Uses a pretrained Uni-Mol v1 encoder to generate 512-dimensional
-molecular representations from SMILES.
+Uses a Uni-Mol v1 encoder to generate 512-dimensional molecular representations from SMILES. By default this is
+the pretrained encoder, selected as `unimol`. A fine-tuned model is selected as `unimol[/path/to/model_0.pth]`
+(or `unimol[alias]`, see foundation_alias) wherever an input name is accepted: the weights are the `model_0.pth`
+written by `train-unimol`, and the fingerprint is the encoder's CLS embedding; the regression head is not used.
 """
 
+import os
+import re
+from pathlib import Path
 from typing import ClassVar
 from rdkit.Chem import AllChem
 
@@ -13,18 +18,54 @@ from rdkit import Chem
 from tqdm import tqdm
 
 from representations.base import Representation
+from representations.foundation_alias import resolve_alias
 
 
 _OUTPUT_DIM = 512
 _BATCH_SIZE = 32
+_SPEC = re.compile(r"^unimol\[(.+)\]$")
+
+
+def parse_spec(name: str) -> Path | None:
+    """Return the weights path of a `unimol[/path]` or `unimol[alias]` input name, or None if it isn't one."""
+    match = _SPEC.match(name)
+    return Path(resolve_alias(match.group(1))).expanduser() if match else None
+
+
+def cache_name(name: str) -> str:
+    """Filesystem-safe cache stem for a spec, so the cache is keyed by the weights, not just 'unimol'.
+
+    Includes size and mtime: retraining to the same path must not reuse stale embeddings.
+    """
+    path = parse_spec(name)
+    if path is None:
+        raise ValueError(f"not a unimol[...] input: {name!r}")
+    stat = path.stat()
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", str(path.resolve())).strip("_")[-80:]
+    return f"unimol_{slug}_{stat.st_size}_{int(stat.st_mtime)}"
+
+
+def _dict_path(weights: Path) -> str:
+    """The token dictionary for fine-tuned weights: dict.txt beside them if present, else the pretrained one."""
+    beside = weights.parent / "dict.txt"
+    if beside.is_file():
+        return str(beside)
+    from unimol_tools.config import MODEL_CONFIG
+    from unimol_tools.weights import get_weight_dir, weight_download
+
+    name = MODEL_CONFIG["dict"]["molecule_all_h"]
+    if not (Path(get_weight_dir()) / name).exists():
+        weight_download(name, get_weight_dir())
+    return os.path.join(get_weight_dir(), name)
 
 
 class UniMol(Representation):
-    """Generate 512-dimensional embeddings using pretrained Uni-Mol."""
+    """Generate 512-dimensional embeddings using Uni-Mol: pretrained, or the fine-tuned model at `path`."""
 
     name: ClassVar[str] = "unimol"
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
         self._model = None 
 
     def _ensure_loaded(self) -> None:
@@ -33,11 +74,18 @@ class UniMol(Representation):
             import torch
             from unimol_tools import UniMolRepr
 
+            weights = {}
+            if self.path is not None:
+                if not self.path.exists():
+                    raise FileNotFoundError(f"unimol weights not found: {self.path}")
+                weights = {"pretrained_model_path": str(self.path), "pretrained_dict_path": _dict_path(self.path)}
             self._model = UniMolRepr(
                 data_type="molecule",
                 model_name="unimolv1",
                 use_cuda=torch.cuda.is_available(),
+                **weights,
             )
+
     def transform(self, smiles: pl.Series) -> np.ndarray:
         """Return deterministic 512-dimensional Uni-Mol embeddings."""
         self._ensure_loaded()
