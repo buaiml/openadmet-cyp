@@ -263,3 +263,58 @@ breaking the CLI. It is untuned and has not been run on CYP data yet.
 Chemprop multi-task runs use a different mechanism: `add-split-column` writes
 one pinned `split` column into `data/union_train.csv`, and `head-search`
 refuses to run without it.
+
+## Ensembling
+
+The ensemble runner generates OOF and validation predictions, averages training
+seeds, filters candidates, combines highly correlated models, and fits one
+stacker per scored target. Choose `nnls`, `ridgecv`, or `elasticnetcv`.
+
+Input is a CSV with `SMILES`, the pinned `split` column (`train`, `val`, `test`),
+and the four `CYP{1A2,2C9,2D6,3A4}_pIC50_direct_inhibition` columns. Missing
+target labels are allowed. Preparation generates or verifies `inchikey_full`
+and `inchikey_block`: full keys distinguish rows, including stereoisomers;
+connectivity blocks keep related records together and must not cross splits.
+
+OOF folds use pinned training rows only. The config can create scaffold,
+Butina, or randomized connectivity-block folds, or load a saved CSV containing
+`inchikey_full,fold,oof_group`. The same assignments are used across models
+and seeds. Input data must not already contain `fold` or `oof_group` columns.
+
+```bash
+# Optional: create development smoke-test data
+PYTHONPATH=src python scripts/prepare_ensemble_smoke.py
+
+# Run the ensemble workflow
+run-ensemble --config config/ensemble_smoke.json
+```
+
+The config sets data/output paths, folds, at least three distinct training seeds,
+model configurations, and the stacker. Feature models must accept `random_state`.
+Output directories must be empty; the runner does not resume interrupted runs.
+For team comparisons, use the shared pinned dataset rather than the smoke split.
+
+Candidates must pass validation R² >= 0.3 and held-out/OOF RAE ratio <= 2.
+Complete-linkage clustering combines candidates with pairwise validation
+prediction correlations > 0.95; the same cluster membership averages their
+OOF predictions. Stacking weights are fitted on those OOF predictions.
+If any target has no survivors, `filter_decisions.csv` is saved and the run
+stops without fitting a stacker.
+
+Outputs include config, prepared data, folds, predictions/truth, filter decisions,
+cluster membership, `stack.json` (weights and fitted parameters), and
+`validation_metrics.csv`.
+
+For new molecules, reuse saved cluster membership and apply `predict_stack` to
+matching model/cluster predictions.
+Validation informs selection, so validation metrics are development results;
+the stacker's OOF-matrix fit metrics are not independent evaluation scores.
+
+Chemprop can train jointly on additional auxiliary regression columns listed
+in `chemprop_config.target_columns`. Feature models do not automatically use
+auxiliary target columns, but can use auxiliary-trained checkpoint embeddings.
+Checkpoints must not have been trained on held-out labels. Record their resolved
+paths and hashes, keep weights immutable, and use fresh caches when changing them.
+
+The real-data smoke run stopped at filtering: its random forest failed R² for all
+four targets. Successful real-data stacking remains unverified.
