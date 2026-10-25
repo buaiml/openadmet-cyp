@@ -56,6 +56,7 @@ def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
         raise OSError(f"Cannot write predictions CSV to {path}: {exc}") from exc
 
 
+_MIN_LABEL_WIDTH = 4
 _METRICS = ["RMSE", "MAE", "R2", "ST-RAE", "Spearman", "Kendall"]
 # Direction each metric improves in: True = lower is better.
 _HEADERS = {"RMSE": "RMSE", "MAE": "MAE", "R2": "R2", "ST-RAE": "ST-RAE", "Spearman": "ρ", "Kendall": "τ"}
@@ -133,6 +134,10 @@ def _short(label: str) -> str:
     return re.sub(r"chemprop\[([^\]]*)\]", lambda m: f"chemprop[{Path(m.group(1)).name}]", label)
 
 
+def _ellipsize(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: max(width - 1, 1)] + "…"
+
+
 def _aggregate(results: list[tuple[str, str, str, dict[str, float]]]) -> list[tuple[str, str, dict[str, float]]]:
     """Macro-average each metric over isoforms per (model, input); NaNs are skipped per metric."""
     grouped: dict[tuple[str, str], list[dict[str, float]]] = {}
@@ -173,12 +178,31 @@ def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_b
 
     table = Table(box=box.SIMPLE_HEAD, header_style="bold cyan", title_style="bold", padding=(0, 1), pad_edge=False)
     table.add_column("Isoform", style="bold", no_wrap=True)
-    table.add_column("Model", overflow="fold")
-    table.add_column("Input", overflow="fold")
+    table.add_column("Model", no_wrap=True)
+    table.add_column("Input", no_wrap=True)
+    numeric_width = 0
     for metric in _METRICS:
         arrow = " ▼" if _LOWER_IS_BETTER[metric] else " ▲"
         header = _HEADERS[metric] + (arrow if metric == sort_by else "")
-        table.add_column(header, justify="right", no_wrap=True, min_width=len(header))
+        # Numbers are never shortened: the column is as wide as its header or longest value (e.g. "-0.123"), whichever is larger.
+        value_width = max((len(f"{r[2][metric]:.3f}") for _, rows in blocks for r in rows), default=0)
+        width = max(len(header), value_width)
+        numeric_width += width + 3
+        table.add_column(header, justify="right", no_wrap=True, overflow="ignore", min_width=width)
+
+    # Only the Model/Input strings are shortened (with "…") to fit the terminal; the numeric columns above keep full width.
+    isoform_width = max(len("Isoform"), *(len(iso.replace("_pIC50_direct_inhibition", "")) for iso, _ in blocks))
+    label_budget = max(2 * _MIN_LABEL_WIDTH, console.width - numeric_width - isoform_width - 3 * 3 - 2)
+    model_width = max(len(r[0]) for _, rows in blocks for r in rows)
+    input_width = max(len(_short(r[1])) for _, rows in blocks for r in rows)
+    if model_width + input_width > label_budget:
+        half = label_budget // 2
+        if model_width <= half:
+            input_width = label_budget - model_width
+        elif input_width <= label_budget - half:
+            model_width = label_budget - input_width
+        else:
+            model_width, input_width = label_budget - half, half
 
     for i, (iso, rows) in enumerate(blocks):
         best = {}
@@ -189,8 +213,8 @@ def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_b
             label = iso.replace("_pIC50_direct_inhibition", "") if j == 0 else ""
             table.add_row(
                 f"[bold magenta]{label}[/]" if iso == "MEAN" else label,
-                name,
-                escape(_short(inp)),
+                escape(_ellipsize(name, model_width)),
+                escape(_ellipsize(_short(inp), input_width)),
                 *(_format_cell(metric, m[metric], best[metric]) for metric in _METRICS),
                 end_section=j == len(rows) - 1 and i < len(blocks) - 1,
             )
