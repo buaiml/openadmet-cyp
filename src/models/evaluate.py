@@ -328,6 +328,14 @@ def main() -> None:
         print(f"--val-split must be in (0, 1), got {args.val_split}", file=sys.stderr)
         sys.exit(1)
 
+    if args.predictions_out is not None and args.predictions_out.exists():
+        print(
+            f"Cannot write predictions CSV to {args.predictions_out}: file already exists "
+            "(checked before training; choose a new path or delete it)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     try:
         model_classes = _resolve_models(args.models)
         input_sets = _resolve_inputs(args.input)
