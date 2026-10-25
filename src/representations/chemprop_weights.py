@@ -1,6 +1,6 @@
 """Embeddings from a trained chemprop model's message-passing encoder.
 
-Selected as `chemprop[/path/to/weights]` wherever an input name is accepted.
+Selected as `chemprop[/path/to/weights]` (or `chemprop[alias]`, see foundation_alias) wherever an input name is accepted.
 The weights can be a chemprop model file (`best*.pt`, as written by
 `chemprop train` / `train-chemprop`), a Lightning `.ckpt`, or a message-passing-only
 checkpoint like CheMeleon's. The fingerprint is the aggregated (and batch-normed)
@@ -17,15 +17,16 @@ from rdkit.Chem import MolFromSmiles
 from tqdm import tqdm
 
 from representations.base import Representation
+from representations.foundation_alias import resolve_alias
 
 _BATCH_SIZE = 256
 _SPEC = re.compile(r"^chemprop\[(.+)\]$")
 
 
 def parse_spec(name: str) -> Path | None:
-    """Return the weights path of a `chemprop[/path]` input name, or None if it isn't one."""
+    """Return the weights path of a `chemprop[/path]` or `chemprop[alias]` input name, or None if it isn't one."""
     match = _SPEC.match(name)
-    return Path(match.group(1)).expanduser() if match else None
+    return Path(resolve_alias(match.group(1))).expanduser() if match else None
 
 
 def cache_name(name: str) -> str:

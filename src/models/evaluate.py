@@ -26,6 +26,8 @@ _CYP_TARGETS = [
     "CYP3A4_pIC50_direct_inhibition",
 ]
 
+_ISOFORMS = {t.split("_")[0].removeprefix("CYP"): t for t in _CYP_TARGETS}
+
 console = Console()
 
 _PREDICTION_COLUMNS = ["smiles", "isoform", "model", "input", "split", "seed", "y_true", "y_pred"]
@@ -235,9 +237,9 @@ def main() -> None:
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation fraction")
     parser.add_argument(
         "--split",
-        default="random",
+        default="scaffold",
         choices=["random", "scaffold", "butina"],
-        help="Train/val split strategy (default: random)",
+        help="Train/val split strategy (default: scaffold)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for splitting")
     parser.add_argument(
@@ -248,18 +250,19 @@ def main() -> None:
     )
     parser.add_argument("--models", nargs="+", default=["all"], help="Model names to evaluate, or 'all'")
     parser.add_argument(
-        "--isoform-mode",
-        default="separate",
-        choices=["separate"],
-        help="How to handle the 4 CYP isoforms. 'separate' (default): fit and evaluate an "
-        "independent model per isoform, sharing one feature matrix.",
-    )
-    parser.add_argument(
         "--targets",
         nargs="+",
-        default=_CYP_TARGETS,
+        default=None,
         choices=_CYP_TARGETS,
         help="CYP target column(s) to evaluate (default: all four isoforms)",
+    )
+    parser.add_argument(
+        "--isoforms",
+        nargs="+",
+        default=None,
+        choices=list(_ISOFORMS),
+        help="Shorthand for --targets: isoform(s) to evaluate, direct inhibition pIC50 only "
+        f"(e.g. --isoforms 3A4 2D6). Choices: {list(_ISOFORMS)}",
     )
     parser.add_argument(
         "--input",
@@ -281,8 +284,21 @@ def main() -> None:
         "--predictions-out", type=Path,
         help="Write validation predictions to a new CSV (use results/); creates parents, refuses existing files",
     )
+    parser.add_argument(
+        "--predict-blind",
+        action="store_true",
+        help="Also predict the blinded test set (data/test.csv) with each fitted model and write one CSV per "
+        "(model, input) to results/<model>_<input>_blind_predictions.csv. Models are fit on the train split only.",
+    )
     args = parser.parse_args()
     args.input = args.input or [["rdkit"]]
+
+    if args.targets is not None and args.isoforms is not None:
+        parser.error("--targets and --isoforms are mutually exclusive")
+    if args.isoforms is not None:
+        args.targets = [_ISOFORMS[i] for i in args.isoforms]
+    elif args.targets is None:
+        args.targets = _CYP_TARGETS
 
     if not 0.0 < args.val_split < 1.0:
         print(f"--val-split must be in (0, 1), got {args.val_split}", file=sys.stderr)
@@ -310,11 +326,23 @@ def main() -> None:
     prediction_rows: list[dict[str, object]] = []
     # target -> (model, input) -> {val row index: prediction}
     corr_preds: dict[str, dict[tuple[str, str], dict[int, float]]] = {}
+    blind_df = pl.read_csv(args.data_dir / "test.csv") if args.predict_blind else None
+    # (model, input) -> target -> prediction per blind row (NaN where features are NaN)
+    blind_preds: dict[tuple[str, str], dict[str, np.ndarray]] = {}
     for input_names in input_sets:
         input_label = " + ".join(input_names)
         # Features don't depend on the target isoform, so compute once and reuse across isoforms.
         train_features = featurize(train_df, input_names, cache_dir)
         val_features = featurize(val_df, input_names, cache_dir)
+        if blind_df is not None:
+            blind_features = featurize(blind_df, input_names, cache_dir)
+            blind_valid = ~np.isnan(blind_features).any(axis=1)
+            if not blind_valid.all():
+                print(
+                    f"Dropped {int((~blind_valid).sum())} of {len(blind_df)} blind molecules with NaN features "
+                    f"({input_label}); their predictions are left empty",
+                    file=sys.stderr,
+                )
         for target in args.targets:
             label = f"{target}, {input_label}"
             X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{label}")
@@ -325,11 +353,12 @@ def main() -> None:
             if args.predictions_out is not None:
                 val_smiles = val_df["SMILES"].to_numpy()[val_mask]
             for cls in model_classes:
+                model = cls()
                 if args.predictions_out is None and not args.correlation:
-                    metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+                    metrics = _evaluate_model(model, X_train, y_train, X_val, y_val)
                 else:
                     metrics, predictions = _evaluate_model(
-                        cls(), X_train, y_train, X_val, y_val, return_predictions=True,
+                        model, X_train, y_train, X_val, y_val, return_predictions=True,
                     )
                     if args.correlation:
                         corr_preds.setdefault(target, {})[(cls.name, input_label)] = dict(
@@ -342,7 +371,21 @@ def main() -> None:
                             )))
                             for smiles, actual, pred in zip(val_smiles, y_val, predictions)
                         )
+                if blind_df is not None:
+                    blind_pred = np.full(len(blind_df), np.nan)
+                    blind_pred[blind_valid] = model.predict(blind_features[blind_valid])
+                    blind_preds.setdefault((cls.name, input_label), {})[target] = blind_pred
                 results.append((target, cls.name, input_label, metrics))
+
+    if blind_df is not None:
+        out_dir = Path("results")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for (name, input_label), by_target in blind_preds.items():
+            path = out_dir / f"{name}_{re.sub(r'[^\w+.-]', '_', input_label.replace(' + ', '+'))}_blind_predictions.csv"
+            blind_df.select(["Molecule_Name", "SMILES"]).with_columns(
+                [pl.Series(target, pred) for target, pred in by_target.items()]
+            ).write_csv(path)
+            print(f"Wrote {len(blind_df)} blind predictions to {path}", file=sys.stderr)
 
     if args.predictions_out is not None:
         try:
@@ -360,7 +403,7 @@ def main() -> None:
 
     results.sort(key=_sort_key)
     console.print(
-        f"[dim]isoform-mode[/]={args.isoform_mode}  [dim]input[/]="
+        f"[dim]input[/]="
         + escape(_short(" | ".join(" + ".join(g) for g in args.input)))
         + f"  [dim]split[/]={args.split}  [dim]seed[/]={args.seed}"
     )
