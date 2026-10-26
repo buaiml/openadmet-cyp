@@ -26,7 +26,7 @@ if [ ! -f data/train.csv ] || [ ! -d data/metabolism ]; then
     exit 1
 fi
 
-# Every --datasets config is trained once per seed (configs x seeds models) per learning rate. Pass the
+# Every --datasets config is trained once per seed (configs x seeds models) per learning rate (override with --learning-rate ...). Pass the
 # configs as job args; 'challenge' alone is the challenge only, 'no_challenge' trains on the auxiliary data only:
 #   qsub scripts/train_unimol.qsub --datasets challenge --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \
 #        --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP2C8
@@ -34,12 +34,7 @@ fi
 if [ "$#" -eq 0 ]; then
     set -- --datasets challenge
 fi
-LEARNING_RATES=(5e-5 2e-4 5e-4)
-
-for lr in "${LEARNING_RATES[@]}"; do
-    echo "=== lr=$lr ==="
-    python -m models.train_model --model unimol \
-        --learning-rate "$lr" \
-        --n-seeds 3 --seed 0 \
-        "$@"
-done
+python -m models.train_model --model unimol \
+    --learning-rate 5e-5 2e-4 5e-4 \
+    --n-seeds 3 --seed 0 \
+    "$@"

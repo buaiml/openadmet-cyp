@@ -78,8 +78,9 @@ train-model --list-datasets                     # selectable sources
 train-model --model chemprop --datasets tdc_hlm pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 --loss-function mae
 train-model --model chemeleon --datasets pubchem:CYP1A2
 train-model --model unimol --datasets pubchem:CYP1A2 --learning-rate 2e-4
-# configs x seeds: repeat --datasets, add --n-seeds N (or --seeds 0 1 2); one model per pair
-train-model --model unimol --n-seeds 3 --datasets challenge \
+# configs x learning rates x seeds: repeat --datasets, add --n-seeds N (or --seeds 0 1 2) and, for unimol, several
+# --learning-rate values; one model per combination
+train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 --datasets challenge \
     --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \
     --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP2C8
 # pretrain on stability, then train on the challenge plus auxiliary heads (chemprop/chemeleon)

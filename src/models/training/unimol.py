@@ -35,7 +35,9 @@ class UnimolBackend(Backend):
     defaults = {"epochs": 30}
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--learning-rate", type=float, default=2e-4)
+        parser.add_argument(
+            "--learning-rate", nargs="+", type=float, default=[2e-4], help="One or more learning rates; each is swept like a seed (default: 2e-4)"
+        )
         parser.add_argument("--cpu", action="store_true", help="Force CPU even if CUDA is available")
 
     def run(self, args: argparse.Namespace, extra_args: list[str]) -> int:

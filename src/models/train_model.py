@@ -4,10 +4,11 @@
   train-model --model chemeleon --datasets pubchem:CYP1A2
   train-model --model unimol    --datasets pubchem:CYP1A2 --learning-rate 2e-4
 
-Repeat --datasets for several configs and add --n-seeds N (or --seeds 0 1 2) to
-train every config once per seed (configs x seeds models):
+Repeat --datasets for several configs, add --n-seeds N (or --seeds 0 1 2), and for
+unimol give several --learning-rate values: every combination trains one model
+(configs x learning rates x seeds):
 
-  train-model --model unimol --n-seeds 3 \\
+  train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 \\
       --datasets challenge \\
       --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \\
       --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP2C8
@@ -64,11 +65,14 @@ def main(argv: list[str] | None = None, model: str | None = None) -> None:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 
     seeds = args.seeds or (list(range(args.seed, args.seed + args.n_seeds)) if args.n_seeds else [args.seed])
-    runs = [(group, seed) for group in args.datasets or [None] for seed in seeds]
+    lrs = args.learning_rate if hasattr(args, "learning_rate") else [None]  # only backends with the flag sweep it
+    runs = [(group, lr, seed) for group in args.datasets or [None] for lr in lrs for seed in seeds]
     failed = []
-    for index, (group, seed) in enumerate(runs, 1):
+    for index, (group, lr, seed) in enumerate(runs, 1):
         run = copy.copy(args)
         run.seed = seed
+        if lr is not None:
+            run.learning_rate = lr
         run.no_challenge_labels = False
         run.run_label = "challenge"
         if group is not None:
@@ -84,10 +88,10 @@ def main(argv: list[str] | None = None, model: str | None = None) -> None:
             base = args.output_dir or backend.results_dir
             run.output_dir = base / run.run_label / f"seed{seed}"
         backend.validate(run, parser)
-        print(f"\n##### run {index}/{len(runs)}: {run.run_label} seed {seed}", file=sys.stderr)
+        print(f"\n##### run {index}/{len(runs)}: {run.run_label}{f' lr {lr}' if lr is not None else ''} seed {seed}", file=sys.stderr)
         code = backend.run(run, extra)
         if code != 0:
-            failed.append(f"{run.run_label} seed {seed}")
+            failed.append(f"{run.run_label} lr {lr} seed {seed}")
     if failed:
         print(f"\n{len(failed)}/{len(runs)} runs failed: {', '.join(failed)}", file=sys.stderr)
         sys.exit(1)
