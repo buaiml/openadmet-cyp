@@ -104,8 +104,8 @@ Chemprop-based models pass unknown flags (`--batch-size`, `--accelerator`,
 instead, `--data-path data/union_train.csv --target-columns <all heads>`
 (`build-union` prints the exact command with the head list filled in).
 `train-chemprop` and `train-unimol` remain as aliases for the matching
-`--model`. The Uni-Mol sweep over learning rates and seeds is
-`scripts/train_unimol.qsub`. To add a model, write a `Backend` in
+`--model`. On SCC, `scripts/train_model.qsub` forwards its arguments to
+`train-model`. To add a model, write a `Backend` in
 `src/models/training/` and register it in `BACKENDS`.
 
 ```bash
