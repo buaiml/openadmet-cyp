@@ -13,7 +13,7 @@
 | 1. Shape descriptors | Implemented (`src/representations/shape.py`), registered as `shape` | 11 RDKit `Descriptors3D` features (PMI1–3, NPR1–2, asphericity, eccentricity, inertial shape factor, radius of gyration, spherocity, PBF). Fixed-seed ETKDGv3 conformer (seed 42), MMFF-optimized (max 1,000 iterations). Failures give a NaN row. |
 | 2. Conformer determinism | Fixed seed; failure rate measured on training data | Test-set failure rate not yet measured. |
 | 3. Frozen Uni-Mol | Implemented (`src/representations/unimol.py`), registered as `unimol` | Uni-Mol v1 via `unimol_tools`, 512-dim embeddings, same fixed-seed MMFF conformers as `shape`. Embedding correlation with `chemeleon` **not yet computed** (prediction correlation reported instead, see below). |
-| 4. Fine-tuned Uni-Mol | Script written (`src/models/train_unimol.py`, `scripts/train_unimol.qsub`); pipeline tested on a small CPU run (24 train / 6 validation molecules) | One model per isoform on the pinned `split` column; writes T4 long-format predictions. Full sweep (3 LRs × 3 seeds × 4 isoforms) **not yet run**; needs SCC GPU. |
+| 4. Fine-tuned Uni-Mol | Implemented as a backend of the `train-model` CLI (`src/models/training/unimol.py`, submitted with `scripts/train_model.qsub`); pipeline tested on a small CPU run (24 train / 6 validation molecules) and, in the final multi-task form, only against a stub `unimol_tools` | One multi-task model over the challenge heads plus any `--datasets` auxiliary heads on the pinned `split` column; writes T4 long-format predictions. Full sweep (3 dataset configs × 3 LRs × 3 seeds) **not yet run**; needs SCC GPU. |
 | 5. Test-time augmentation (optional) | Not run | |
 | 6. Orthogonality (optional) | Preliminary only | Uni-Mol vs CheMeleon *decision-tree* predictions, not chemprop. |
 
@@ -72,7 +72,17 @@ Not run.
 
 ### Fine-tuned Uni-Mol learning-rate sweep
 
-Not run. Pipeline verified on a 24/6-molecule CPU smoke test only.
+Not run. Planned: 3 dataset configs (challenge only, challenge + auxiliary, auxiliary only) × learning rates 1e-2 / 1e-3 / 1e-4 × seeds 0/1/2 = 27 models, submitted as
+
+```
+qsub -l h_rt=48:00:00 scripts/train_model.qsub --model unimol \
+    --learning-rate 1e-2 1e-3 1e-4 --n-seeds 3 --seed 0 \
+    --datasets challenge \
+    --datasets pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8 \
+    --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8
+```
+
+The auxiliary-only model has no challenge head, so each challenge head is scored with the same-isoform auxiliary head (a cross-assay proxy): its RMSE includes a calibration offset, and only CYP1A2 and CYP2C9/2D6/3A4 heads with a matching auxiliary isoform can be scored. Pipeline verified on a 24/6-molecule CPU smoke test only.
 
 ## Not done yet
 
@@ -80,12 +90,13 @@ Not run. Pipeline verified on a 24/6-molecule CPU smoke test only.
 - Step-3 embedding correlation between `unimol` and `chemeleon`.
 - Conformer failure rate on the test set; diagnose the two failing molecules.
 - `shape` as chemprop extra descriptors.
-- Full fine-tuning sweep (LR 5e-5 / 2e-4 / 5e-4 × seeds 0/1/2 × 4 isoforms = 36 runs) on SCC.
+- Full fine-tuning sweep (3 dataset configs × LR 1e-2 / 1e-3 / 1e-4 × seeds 0/1/2 = 27 runs) on SCC; see the command above.
 - Optional steps 5 (TTA) and 6 (orthogonality vs chemprop).
 
 ## Open questions
 
-- `train_unimol.py` trains one model per isoform rather than masking missing labels in a multi-task model. Does `unimol_tools` support masked multi-task regression?
+- Fine-tuning is now one multi-task model with masked labels: `unimol_tools`' `multilabel_regression` uses a NaN-masked MAE loss, so missing labels are skipped. This has not been confirmed on a real run, and the loss is MAE rather than the MSE of single-target `regression`, which also skips its 3-sigma outlier cleaning.
+- 1e-2 is a high learning rate for fine-tuning a pretrained transformer and may diverge; the sweep will show.
 - **Early stopping uses training loss.** With `kfold=1`, `unimol_tools` 0.1.6 does not hold out any data: its splitter returns an empty test-index tuple, and indexing with an empty tuple returns the whole array, so the internal "validation" set is the full training set. Early stopping (patience 10) and the saved checkpoint are therefore chosen on training loss. The official `val` rows are never passed to the trainer, so the reported validation RMSE is not leaked, but there is no protection against overfitting. Options: hold out a scaffold-grouped slice of the train rows for early stopping, or use `kfold=5` (5× compute; an earlier local run with that setting produced `model_0.pth` … `model_4.pth`).
-- `scripts/train_unimol.qsub` still has two TODOs: the SCC project (`-P`) and the environment to activate. It runs all 36 fits sequentially in one 48 h job and expects a pinned-split table at `data/union_train.csv` (override with `DATA_PATH`).
+- `scripts/train_unimol.qsub` is gone: `scripts/train_model.qsub` forwards its arguments to `train-model`, which merges the datasets and pinned split itself (no `data/union_train.csv` needed). The 27 fits run sequentially in one job; raise `h_rt` for more.
 - `fold` is written as `"val"` in the OOF output; confirm this matches what T4 expects.
