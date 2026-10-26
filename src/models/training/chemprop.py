@@ -10,14 +10,14 @@ previous stage's message-passing encoder and aggregation (the heads are fresh,
 so stages can have different heads and even different task types).
 
   # one stage, everything jointly
-  train-model --model chemprop --datasets tdc_hlm tdc_rlm pubchem:CYP1A2 --loss-function mae
+  train-model --model chemprop --datasets admet tdc_hlm tdc_rlm pubchem:CYP1A2 --loss-function mae
 
   # pretrain on stability, then train on the challenge plus auxiliary heads
-  train-model --model chemprop --stage tdc_hlm tdc_rlm --stage pubchem:CYP1A2 bindingdb:CYP2C8
+  train-model --model chemprop --stage tdc_hlm tdc_rlm --stage admet pubchem:CYP1A2 bindingdb:CYP2C8
 
-The challenge (scored heads and the pinned split) is always part of the last
-stage. Earlier stages train only on the datasets they list, on molecules in the
-pinned train split, so no val/test molecule is seen during pretraining; they use
+Only the datasets you list train ('admet' is the ADMET labels); the last stage is
+evaluated on the pinned split. Earlier stages train on molecules in the pinned
+train split only, so no val/test molecule is seen during pretraining; they use
 chemprop's own random split of those rows for early stopping. A stage whose
 heads are all binary is trained as classification. A stage that mixes binary and
 regression heads is trained as regression and the 0/1 labels are treated as numbers.
@@ -106,7 +106,7 @@ class ChempropBackend(Backend):
             default=None,
             metavar="NAME[:ISO,ISO]",
             help="One training stage; repeat for several. Each stage starts from the previous stage's encoder. "
-            "The challenge joins the last stage automatically.",
+            "Name 'admet' in a stage to train on the ADMET labels there.",
         )
         parser.add_argument(
             "--stage-epochs",
@@ -158,8 +158,10 @@ class ChempropBackend(Backend):
             print(f"Running: {' '.join(cmd)}", file=sys.stderr)
             return subprocess.run(cmd, check=False).returncode
 
+        # Only listed datasets train: 'admet' names the ADMET labels (the grid has already split it off --datasets).
+        use_admet = [args.use_admet] if args.datasets is not None else ["admet" in s for s in stage_specs]
         try:
-            parsed = [parse_dataset_specs(s, with_challenge=False) for s in stage_specs]
+            parsed = [parse_dataset_specs([t for t in s if t != "admet"], with_challenge=False) for s in stage_specs]
         except ValueError as exc:
             parser.error(str(exc))
         n_stages = len(parsed)
@@ -173,9 +175,9 @@ class ChempropBackend(Backend):
             stage_dir = output_dir if n_stages == 1 else output_dir / f"stage{index + 1}"
             stage_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"\n=== {label}: {', '.join(specs) or 'ADMET only'} ===", file=sys.stderr)
+            print(f"\n=== {label}: {', '.join((['admet'] if use_admet[index] else []) + list(specs))} ===", file=sys.stderr)
             table, heads, scored, tasks = merge_stage(specs, args)
-            stage_heads = [h for h in heads if final or h not in scored]
+            stage_heads = [h for h in heads if h not in scored or use_admet[index]]
             unknown = [c for c in args.target_columns or [] if c not in stage_heads]
             if unknown:
                 parser.error(f"--target-columns not among {label} heads {stage_heads}: {unknown}")

@@ -30,10 +30,10 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=None,
         metavar="NAME[:ISO,ISO]",
-        help="One dataset config; repeat --datasets for several. The ADMET data is always included. Heads are named "
-        "{isoform}-{source}, e.g. --datasets bindingdb:CYP2D6,CYP1A2 tdi. Use 'admet' for the ADMET data alone "
-        "and add 'no_admet' to train on the auxiliary data only (the ADMET heads are then scored with the "
-        "same-isoform auxiliary head). Every config is trained once per seed.",
+        help="One dataset config; repeat --datasets for several. Only the datasets you list are trained on: 'admet' "
+        "is the ADMET data, so --datasets admet pubchem:CYP1A2 trains on both and --datasets pubchem:CYP1A2 on the "
+        "auxiliary data alone (the ADMET heads are then scored with the same-isoform auxiliary head). Heads are "
+        "named {isoform}-{source}, e.g. bindingdb:CYP2D6,CYP1A2 tdi. Every config is trained once per seed.",
     )
     parser.add_argument("--list-datasets", action="store_true", help="List selectable datasets and exit")
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Where the source CSVs live (default: data)")
@@ -58,7 +58,7 @@ def merge_stage(specs: dict[str, list[str] | None], args: argparse.Namespace):
     Returns (table, heads, scored, tasks) exactly as data_tools.merge_datasets.merge.
     """
     return merge(
-        {"challenge": None, **specs},  # the challenge supplies the scored heads and the pinned split
+        {"challenge": None, **specs},  # always loaded for the pinned split and scoring; its labels train only if listed
         data_dir=args.data_dir,
         split_strategy=args.split_strategy,
         split_seed=args.split_seed,
@@ -74,18 +74,18 @@ def prepare_joint_split(
     auxiliary-only molecules still train their head. Val is the pinned val split.
     """
     table, heads, scored, tasks = merge_stage(specs, args)
-    if args.no_admet_labels:
+    if not args.use_admet:
         target_columns = args.target_columns or [h for h in heads if h not in scored]
         if any(h in scored for h in target_columns):
-            parser.error("no_admet excludes the scored heads from --target-columns")
+            parser.error("--target-columns lists ADMET heads but the config does not include admet")
         if not target_columns:
-            parser.error("no_admet needs at least one auxiliary dataset in --datasets")
+            parser.error("nothing to train on: list admet or an auxiliary dataset in --datasets")
     else:
         target_columns = args.target_columns or heads
     unknown = [c for c in target_columns if c not in heads]
     if unknown:
         parser.error(f"--target-columns not among heads {heads}: {unknown}")
-    if args.no_admet_labels:
+    if not args.use_admet:
         # Score each ADMET head with the first auxiliary head of the same isoform (CYP1A2-Direct <- CYP1A2-PubChem).
         eval_map = {}
         for head in scored:

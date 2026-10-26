@@ -64,8 +64,8 @@ isotope labelling. See `data_tools.standardize`.
 
 ## Training
 
-`train-model` trains any supported model on the ADMET data plus whichever
-auxiliary datasets you name. Pick the model with `--model`:
+`train-model` trains any supported model on exactly the datasets you list.
+Pick the model with `--model`:
 
 | `--model` | What it trains |
 |---|---|
@@ -75,29 +75,32 @@ auxiliary datasets you name. Pick the model with `--model`:
 
 ```bash
 train-model --list-datasets                     # selectable sources
-train-model --model chemprop --datasets tdc_hlm pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 --loss-function mae
-train-model --model chemeleon --datasets pubchem:CYP1A2
-train-model --model unimol --datasets pubchem:CYP1A2 --learning-rate 2e-4
+train-model --model chemprop --datasets admet tdc_hlm pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 --loss-function mae
+train-model --model chemeleon --datasets admet pubchem:CYP1A2
+train-model --model unimol --datasets admet pubchem:CYP1A2 --learning-rate 2e-4
 # configs x learning rates x seeds: repeat --datasets, add --n-seeds N (or --seeds 0 1 2) and, for unimol, several
 # --learning-rate values; one model per combination
-train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 --datasets admet \
-    --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \
-    --datasets no_admet pubchem:CYP1A2 bindingdb:CYP2C8
-# pretrain on stability, then train on the challenge plus auxiliary heads (chemprop/chemeleon)
-train-model --model chemprop --stage tdc_hlm tdc_rlm --stage pubchem:CYP1A2
+train-model --model unimol --n-seeds 3 --learning-rate 1e-2 1e-3 1e-4 \
+    --datasets admet \
+    --datasets admet pubchem:CYP1A2 bindingdb:CYP2C8 \
+    --datasets pubchem:CYP1A2 bindingdb:CYP2C8
+# pretrain on stability, then train on the ADMET data plus auxiliary heads (chemprop/chemeleon)
+train-model --model chemprop --stage tdc_hlm tdc_rlm --stage admet pubchem:CYP1A2
 ```
 
-`--datasets NAME[:ISO,ISO]` takes sources like `pubchem`, `bindingdb`, `tdi`
-or `chembl`; heads are named `{isoform}-{source}`. The ADMET data is always
-included: it supplies the four scored heads and the pinned train/val split, and
-auxiliary-only molecules always train. Each head keeps its own scale and
-missing labels are masked in the loss. With no `--datasets`, only the
-ADMET data is used. A config of `admet` alone is the ADMET data only; adding
-`no_admet` to a config (Uni-Mol only) trains on the auxiliary data alone and
-scores each ADMET head with the same-isoform auxiliary head, so its RMSE
-carries a cross-assay calibration offset. With several runs, outputs go to
-`<output-dir>/<config>/seed<N>` (default `results/<model>/...`). Shared flags: `--target-columns`, `--split-strategy`,
-`--split-seed`, `--epochs`, `--seed`, `--output-dir`.
+`--datasets` takes `admet` (the ADMET labels) and auxiliary sources such as
+`pubchem`, `bindingdb`, `tdi` or `chembl`, as `NAME[:ISO,ISO]`; heads are named
+`{isoform}-{source}`. Only what you list is trained on: `--datasets admet` is the
+ADMET data alone, `--datasets admet pubchem` is both, and `--datasets pubchem`
+is the auxiliary data alone. The ADMET data is still loaded in every case,
+since it provides the pinned train/val split and the validation molecules; with
+no `admet` in the config its labels are just not trained on, and each ADMET head
+is scored with the same-isoform auxiliary head, so that RMSE carries a
+cross-assay calibration offset. Each head keeps its own scale and missing labels
+are masked in the loss. With several runs, outputs go to
+`<output-dir>/<config>/seed<N>` (default `results/<model>/...`). Shared flags:
+`--target-columns`, `--split-strategy`, `--split-seed`, `--epochs`, `--seed`,
+`--output-dir`.
 
 Chemprop-based models pass unknown flags (`--batch-size`, `--accelerator`,
 `--task-weights`, ...) through to `chemprop train`. To train on a ready table

@@ -1,17 +1,18 @@
 """Train any supported model on the ADMET data plus auxiliary datasets.
 
-  train-model --model chemprop  --datasets pubchem:CYP1A2 bindingdb:CYP2C8 --loss-function mae
-  train-model --model chemeleon --datasets pubchem:CYP1A2
-  train-model --model unimol    --datasets pubchem:CYP1A2 --learning-rate 2e-4
+  train-model --model chemprop  --datasets admet pubchem:CYP1A2 bindingdb:CYP2C8 --loss-function mae
+  train-model --model chemeleon --datasets admet pubchem:CYP1A2
+  train-model --model unimol    --datasets admet pubchem:CYP1A2 --learning-rate 2e-4
 
-Repeat --datasets for several configs, add --n-seeds N (or --seeds 0 1 2), and for
+Only the datasets you list are trained on ('admet' is the ADMET labels). Repeat
+--datasets for several configs, add --n-seeds N (or --seeds 0 1 2), and for
 unimol give several --learning-rate values: every combination trains one model
 (configs x learning rates x seeds):
 
   train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 \\
       --datasets admet \\
-      --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \\
-      --datasets no_admet pubchem:CYP1A2 bindingdb:CYP2C8
+      --datasets admet pubchem:CYP1A2 bindingdb:CYP2C8 \\
+      --datasets pubchem:CYP1A2 bindingdb:CYP2C8
 
 Datasets, split and head selection are shared (models.training.common); each
 backend adds its own flags. `--model chemeleon` is chemprop started from the
@@ -27,7 +28,7 @@ from data_tools.merge_datasets import describe
 from models.training import BACKENDS
 from models.training.common import add_common_arguments, slug
 
-_MARKERS = {"admet", "no_admet"}  # dataset-config tokens, not sources
+_ADMET = "admet"  # names the ADMET labels as training data; not a mergeable source
 
 
 def main(argv: list[str] | None = None, model: str | None = None) -> None:
@@ -64,6 +65,8 @@ def main(argv: list[str] | None = None, model: str | None = None) -> None:
     if extra and not backend.passthrough:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 
+    if backend.requires_datasets and not args.datasets:
+        parser.error("pass --datasets (e.g. --datasets admet, or --datasets admet pubchem:CYP1A2); see --list-datasets")
     seeds = args.seeds or (list(range(args.seed, args.seed + args.n_seeds)) if args.n_seeds else [args.seed])
     lrs = args.learning_rate if hasattr(args, "learning_rate") else [None]  # only backends with the flag sweep it
     runs = [(group, lr, seed) for group in args.datasets or [None] for lr in lrs for seed in seeds]
@@ -73,17 +76,12 @@ def main(argv: list[str] | None = None, model: str | None = None) -> None:
         run.seed = seed
         if lr is not None:
             run.learning_rate = lr
-        run.no_admet_labels = False
-        run.run_label = "admet"
+        run.use_admet = True
+        run.run_label = _ADMET
         if group is not None:
-            tokens = [t for t in group if t not in _MARKERS]
-            run.no_admet_labels = "no_admet" in group
-            if run.no_admet_labels and not backend.supports_no_admet:
-                parser.error(f"--model {model} cannot train without the ADMET data ('no_admet')")
-            if run.no_admet_labels and not tokens:
-                parser.error("'no_admet' needs at least one auxiliary dataset in the same --datasets")
-            run.datasets = tokens
-            run.run_label = ("aux_only+" if run.no_admet_labels else "") + slug(tokens)
+            run.use_admet = _ADMET in group
+            run.datasets = [t for t in group if t != _ADMET]
+            run.run_label = slug(group)
         if len(runs) > 1:
             base = args.output_dir or backend.results_dir
             run.output_dir = base / run.run_label / f"seed{seed}"

@@ -78,8 +78,8 @@ Not run. Planned: 3 dataset configs (ADMET only, ADMET + auxiliary, auxiliary on
 qsub -l h_rt=48:00:00 scripts/train_model.qsub --model unimol \
     --learning-rate 1e-2 1e-3 1e-4 --n-seeds 3 --seed 0 \
     --datasets admet \
-    --datasets pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8 \
-    --datasets no_admet pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8
+    --datasets admet pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8 \
+    --datasets pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 chembl:CYP1A2,CYP2C8
 ```
 
 The auxiliary-only model has no challenge head, so each challenge head is scored with the same-isoform auxiliary head (a cross-assay proxy): its RMSE includes a calibration offset, and only CYP1A2 and CYP2C9/2D6/3A4 heads with a matching auxiliary isoform can be scored. Pipeline verified on a 24/6-molecule CPU smoke test only.

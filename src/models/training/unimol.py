@@ -31,7 +31,7 @@ def set_seed(seed: int) -> None:
 
 class UnimolBackend(Backend):
     results_dir = Path("results/unimol")
-    supports_no_admet = True
+    requires_datasets = True
     defaults = {"epochs": 30}
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
