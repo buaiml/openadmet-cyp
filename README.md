@@ -64,7 +64,7 @@ isotope labelling. See `data_tools.standardize`.
 
 ## Training
 
-`train-model` trains any supported model on the challenge plus whichever
+`train-model` trains any supported model on the ADMET data plus whichever
 auxiliary datasets you name. Pick the model with `--model`:
 
 | `--model` | What it trains |
@@ -80,21 +80,21 @@ train-model --model chemeleon --datasets pubchem:CYP1A2
 train-model --model unimol --datasets pubchem:CYP1A2 --learning-rate 2e-4
 # configs x learning rates x seeds: repeat --datasets, add --n-seeds N (or --seeds 0 1 2) and, for unimol, several
 # --learning-rate values; one model per combination
-train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 --datasets challenge \
+train-model --model unimol --n-seeds 3 --learning-rate 5e-5 2e-4 5e-4 --datasets admet \
     --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \
-    --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP2C8
+    --datasets no_admet pubchem:CYP1A2 bindingdb:CYP2C8
 # pretrain on stability, then train on the challenge plus auxiliary heads (chemprop/chemeleon)
 train-model --model chemprop --stage tdc_hlm tdc_rlm --stage pubchem:CYP1A2
 ```
 
 `--datasets NAME[:ISO,ISO]` takes sources like `pubchem`, `bindingdb`, `tdi`
-or `chembl`; heads are named `{isoform}-{source}`. The challenge is always
+or `chembl`; heads are named `{isoform}-{source}`. The ADMET data is always
 included: it supplies the four scored heads and the pinned train/val split, and
 auxiliary-only molecules always train. Each head keeps its own scale and
 missing labels are masked in the loss. With no `--datasets`, only the
-challenge is used. A config of `challenge` alone is the challenge only; adding
-`no_challenge` to a config (Uni-Mol only) trains on the auxiliary data alone and
-scores each challenge head with the same-isoform auxiliary head, so its RMSE
+ADMET data is used. A config of `admet` alone is the ADMET data only; adding
+`no_admet` to a config (Uni-Mol only) trains on the auxiliary data alone and
+scores each ADMET head with the same-isoform auxiliary head, so its RMSE
 carries a cross-assay calibration offset. With several runs, outputs go to
 `<output-dir>/<config>/seed<N>` (default `results/<model>/...`). Shared flags: `--target-columns`, `--split-strategy`,
 `--split-seed`, `--epochs`, `--seed`, `--output-dir`.

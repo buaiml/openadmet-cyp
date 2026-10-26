@@ -173,7 +173,7 @@ class ChempropBackend(Backend):
             stage_dir = output_dir if n_stages == 1 else output_dir / f"stage{index + 1}"
             stage_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"\n=== {label}: {', '.join(specs) or 'challenge only'} ===", file=sys.stderr)
+            print(f"\n=== {label}: {', '.join(specs) or 'ADMET only'} ===", file=sys.stderr)
             table, heads, scored, tasks = merge_stage(specs, args)
             stage_heads = [h for h in heads if final or h not in scored]
             unknown = [c for c in args.target_columns or [] if c not in stage_heads]
