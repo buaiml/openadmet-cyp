@@ -5,7 +5,7 @@
 #$ -o train_unimol.qlog
 #$ -l h_rt=48:00:00          # 4 targets x 3 learning rates x 3 seeds = 36 sequential fine-tunes; pad generously
 #$ -l gpus=1
-#$ -l gpu_c=7.0               # min compute capability -- KEEP this; older GPUs lack kernels for
+#$ -l gpu_c=9.0               # min compute capability -- KEEP this; older GPUs lack kernels for
                                # our torch build (cudaErrorNoKernelImageForDevice). Raise it (e.g.
                                # 8.0) if the same error recurs, don't drop it.
 #$ -pe omp 4                 # CPU cores for conformer generation/dataloading alongside the GPU
