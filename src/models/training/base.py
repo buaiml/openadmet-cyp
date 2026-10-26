@@ -1,6 +1,7 @@
 """Interface every training backend implements."""
 
 import argparse
+from pathlib import Path
 
 
 class Backend:
@@ -10,6 +11,10 @@ class Backend:
     passthrough = False
     #: Per-backend defaults for the shared flags (epochs, ...).
     defaults: dict[str, object] = {}
+    #: Where runs go by default (used to lay out a datasets x seeds grid).
+    results_dir = Path("results")
+    #: Can train on the auxiliary data alone (the `no_challenge` dataset marker).
+    supports_no_challenge = False
 
     def __init__(self, name: str) -> None:
         self.name = name

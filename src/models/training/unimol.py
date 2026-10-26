@@ -17,7 +17,7 @@ import torch
 
 from data_tools.merge_datasets import parse_dataset_specs
 from models.training.base import Backend
-from models.training.common import prepare_joint_split, slug, write_val_outputs
+from models.training.common import prepare_joint_split, write_val_outputs
 
 
 def set_seed(seed: int) -> None:
@@ -30,6 +30,8 @@ def set_seed(seed: int) -> None:
 
 
 class UnimolBackend(Backend):
+    results_dir = Path("results/unimol")
+    supports_no_challenge = True
     defaults = {"epochs": 30}
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
@@ -45,16 +47,16 @@ class UnimolBackend(Backend):
             args.parser.error(str(exc))
         set_seed(args.seed)
 
-        train_df, val_df, target_columns, eval_heads = prepare_joint_split(specs, args, args.parser)
+        train_df, val_df, target_columns, eval_map = prepare_joint_split(specs, args, args.parser)
         datasets = args.datasets or []
         use_cuda = torch.cuda.is_available() and not args.cpu
 
-        base_dir = args.output_dir or Path("results/unimol") / slug(datasets)
+        base_dir = args.output_dir or Path("results/unimol") / args.run_label
         output_dir = base_dir / f"lr_{args.learning_rate}_seed_{args.seed}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"Datasets: {', '.join(datasets) or 'challenge only'}")
-        print(f"Heads: {len(target_columns)} ({len(eval_heads)} scored)")
+        print(f"Heads: {len(target_columns)} ({len(eval_map)} scored)")
         print(f"Training molecules: {len(train_df)}")
         print(f"Validation molecules: {len(val_df)}")
         print(f"Learning rate: {args.learning_rate}")
@@ -86,11 +88,11 @@ class UnimolBackend(Backend):
 
         write_val_outputs(
             output_dir,
-            f"unimol_{slug(datasets)}_lr{args.learning_rate}_seed{args.seed}",
+            f"unimol_{args.run_label}_lr{args.learning_rate}_seed{args.seed}",
             val_df,
             train_df,
             dict(zip(target_columns, predictions.T)),
-            eval_heads,
+            eval_map,
             {"learning_rate": args.learning_rate, "seed": args.seed},
         )
         return 0

@@ -95,6 +95,7 @@ class ChempropBackend(Backend):
     def __init__(self, name: str, foundation: str | None = None) -> None:
         super().__init__(name)
         self.foundation = foundation
+        self.results_dir = Path("results/chemprop") / ("chemeleon" if foundation else "")
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--data-path", type=Path, default=None, help="CSV with a SMILES column and target column(s)")
@@ -146,7 +147,7 @@ class ChempropBackend(Backend):
             print("chemprop CLI not found on PATH. Install it with: pip install chemprop", file=sys.stderr)
             return 1
 
-        results_root = Path("results/chemprop") / ("chemeleon" if self.foundation else "")
+        results_root = self.results_dir
         if stage_specs is None:  # a ready table: one plain run
             output_dir = args.output_dir or results_root / f"{args.data_path.stem}_{'+'.join(args.target_columns)}"
             output_dir.mkdir(parents=True, exist_ok=True)

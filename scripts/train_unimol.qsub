@@ -3,7 +3,7 @@
 #$ -N train_unimol
 #$ -j y
 #$ -o train_unimol.qlog
-#$ -l h_rt=24:00:00          # 3 learning rates x 3 seeds = 9 sequential multi-task fine-tunes; pad generously
+#$ -l h_rt=24:00:00          # 3 learning rates x 3 seeds x number of configs sequential fine-tunes; raise for several configs
 #$ -l gpus=1
 #$ -l gpu_c=9.0               # min compute capability -- KEEP this; older GPUs lack kernels for
                                # our torch build (cudaErrorNoKernelImageForDevice). Raise it (e.g.
@@ -26,18 +26,20 @@ if [ ! -f data/train.csv ] || [ ! -d data/metabolism ]; then
     exit 1
 fi
 
-# Extra args choose the auxiliary datasets (the challenge is always included), e.g.
-#   qsub scripts/train_unimol.qsub --datasets pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8
-# With none, trains on the challenge only. See: train-model --list-datasets
+# Every --datasets config is trained once per seed (configs x seeds models) per learning rate. Pass the
+# configs as job args; 'challenge' alone is the challenge only, 'no_challenge' trains on the auxiliary data only:
+#   qsub scripts/train_unimol.qsub --datasets challenge --datasets pubchem:CYP1A2 bindingdb:CYP2C8 \
+#        --datasets no_challenge pubchem:CYP1A2 bindingdb:CYP2C8
+# See: train-model --list-datasets
+if [ "$#" -eq 0 ]; then
+    set -- --datasets challenge
+fi
 LEARNING_RATES=(5e-5 2e-4 5e-4)
-SEEDS=(0 1 2)
 
 for lr in "${LEARNING_RATES[@]}"; do
-    for seed in "${SEEDS[@]}"; do
-        echo "=== lr=$lr seed=$seed ==="
-        python -m models.train_model --model unimol \
-            --learning-rate "$lr" \
-            --seed "$seed" \
-            "$@"
-    done
+    echo "=== lr=$lr ==="
+    python -m models.train_model --model unimol \
+        --learning-rate "$lr" \
+        --n-seeds 3 --seed 0 \
+        "$@"
 done
