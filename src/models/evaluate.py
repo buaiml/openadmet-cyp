@@ -180,7 +180,11 @@ def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_b
     table.add_column("Isoform", style="bold", no_wrap=True)
     table.add_column("Model", no_wrap=True)
     table.add_column("Input", no_wrap=True)
-    numeric_width = 0
+    # Data-point counts ride along in each result's metrics dict; the MEAN rows have none (counts differ per isoform).
+    counts = {id(m): f"{int(m['n_train'])}/{int(m['n_val'])}" for _, rows in blocks for _, _, m in rows if "n_train" in m}
+    counts_width = max([len("Train/Val"), *map(len, counts.values())])
+    table.add_column("Train/Val", justify="right", no_wrap=True, overflow="ignore", min_width=counts_width)
+    numeric_width = counts_width + 3
     for metric in _METRICS:
         arrow = " ▼" if _LOWER_IS_BETTER[metric] else " ▲"
         header = _HEADERS[metric] + (arrow if metric == sort_by else "")
@@ -215,6 +219,7 @@ def _print_results(results: list[tuple[str, str, str, dict[str, float]]], sort_b
                 f"[bold magenta]{label}[/]" if iso == "MEAN" else label,
                 escape(_ellipsize(name, model_width)),
                 escape(_ellipsize(_short(inp), input_width)),
+                counts.get(id(m), ""),
                 *(_format_cell(metric, m[metric], best[metric]) for metric in _METRICS),
                 end_section=j == len(rows) - 1 and i < len(blocks) - 1,
             )
@@ -407,7 +412,7 @@ def main() -> None:
                     blind_pred = np.full(len(blind_df), np.nan)
                     blind_pred[blind_valid] = model.predict(blind_features[blind_valid])
                     blind_preds.setdefault((cls.name, input_label), {})[target] = blind_pred
-                results.append((target, cls.name, input_label, metrics))
+                results.append((target, cls.name, input_label, {**metrics, "n_train": len(y_train), "n_val": len(y_val)}))
 
     if blind_df is not None:
         out_dir = Path("results")
