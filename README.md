@@ -64,14 +64,40 @@ isotope labelling. See `data_tools.standardize`.
 
 ## Training
 
+`train-model` trains any supported model on the challenge plus whichever
+auxiliary datasets you name. Pick the model with `--model`:
+
+| `--model` | What it trains |
+|---|---|
+| `chemprop` | Chemprop D-MPNN from scratch |
+| `chemeleon` | Chemprop started from the CheMeleon foundation weights |
+| `unimol` | Uni-Mol fine-tuned (needs `unimol_tools`; uses the GPU if available, `--cpu` to force CPU) |
+
 ```bash
-# joint multi-task: pass every head at once
-train-chemprop --data-path data/union_train.csv --target-columns <all heads>
+train-model --list-datasets                     # selectable sources
+train-model --model chemprop --datasets tdc_hlm pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 --loss-function mae
+train-model --model chemeleon --datasets pubchem:CYP1A2
+train-model --model unimol --datasets pubchem:CYP1A2 --learning-rate 2e-4
+# pretrain on stability, then train on the challenge plus auxiliary heads (chemprop/chemeleon)
+train-model --model chemprop --stage tdc_hlm tdc_rlm --stage pubchem:CYP1A2
 ```
 
-`build-union` prints the exact command with the head list filled in. All
-`chemprop train` flags (`--batch-size`, `--accelerator`, `--split-type`,
-`--task-weights`, ...) pass through.
+`--datasets NAME[:ISO,ISO]` takes sources like `pubchem`, `bindingdb`, `tdi`
+or `chembl`; heads are named `{isoform}-{source}`. The challenge is always
+included: it supplies the four scored heads and the pinned train/val split, and
+auxiliary-only molecules always train. Each head keeps its own scale and
+missing labels are masked in the loss. With no `--datasets`, only the
+challenge is used. Shared flags: `--target-columns`, `--split-strategy`,
+`--split-seed`, `--epochs`, `--seed`, `--output-dir`.
+
+Chemprop-based models pass unknown flags (`--batch-size`, `--accelerator`,
+`--task-weights`, ...) through to `chemprop train`. To train on a ready table
+instead, `--data-path data/union_train.csv --target-columns <all heads>`
+(`build-union` prints the exact command with the head list filled in).
+`train-chemprop` and `train-unimol` remain as aliases for the matching
+`--model`. The Uni-Mol sweep over learning rates and seeds is
+`scripts/train_unimol.qsub`. To add a model, write a `Backend` in
+`src/models/training/` and register it in `BACKENDS`.
 
 ```bash
 head-search                # search auxiliary-head subsets on the pinned split (single / greedy / ablation / exhaustive)
