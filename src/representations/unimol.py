@@ -59,6 +59,23 @@ def _dict_path(weights: Path) -> str:
     return os.path.join(get_weight_dir(), name)
 
 
+def _encoder_only(path: Path) -> Path:
+    """Copy of a fine-tuned checkpoint without its output layer, which UniMolRepr's 1-output head can't load.
+
+    Fine-tuning on several targets leaves a (n_targets, 512) out_proj; the embeddings come from the encoder alone.
+    """
+    import tempfile
+
+    import torch
+
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model_state_dict"] if "model_state_dict" in checkpoint else checkpoint
+    state = {k: v for k, v in state.items() if not k.startswith("classification_head.out_proj.")}
+    stripped = Path(tempfile.mkdtemp()) / path.name
+    torch.save({"model_state_dict": state} if "model_state_dict" in checkpoint else state, stripped)
+    return stripped
+
+
 class UniMol(Representation):
     """Generate 512-dimensional embeddings using Uni-Mol: pretrained, or the fine-tuned model at `path`."""
 
@@ -78,7 +95,10 @@ class UniMol(Representation):
             if self.path is not None:
                 if not self.path.exists():
                     raise FileNotFoundError(f"unimol weights not found: {self.path}")
-                weights = {"pretrained_model_path": str(self.path), "pretrained_dict_path": _dict_path(self.path)}
+                weights = {
+                    "pretrained_model_path": str(_encoder_only(self.path)),
+                    "pretrained_dict_path": _dict_path(self.path),
+                }
             self._model = UniMolRepr(
                 data_type="molecule",
                 model_name="unimolv1",
