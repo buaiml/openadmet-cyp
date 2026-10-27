@@ -64,14 +64,52 @@ isotope labelling. See `data_tools.standardize`.
 
 ## Training
 
+`train-model` trains any supported model on exactly the datasets you list.
+Pick the model with `--model`:
+
+| `--model` | What it trains |
+|---|---|
+| `chemprop` | Chemprop D-MPNN from scratch |
+| `chemeleon` | Chemprop started from the CheMeleon foundation weights |
+| `unimol` | Uni-Mol fine-tuned (needs `unimol_tools`; uses the GPU if available, `--cpu` to force CPU) |
+
 ```bash
-# joint multi-task: pass every head at once
-train-chemprop --data-path data/union_train.csv --target-columns <all heads>
+train-model --list-datasets                     # selectable sources
+train-model --model chemprop --datasets admet tdc_hlm pubchem:CYP1A2 bindingdb:CYP1A2,CYP2C8 --loss-function mae
+train-model --model chemeleon --datasets admet pubchem:CYP1A2
+train-model --model unimol --datasets admet pubchem:CYP1A2 --learning-rate 2e-4
+# configs x learning rates x seeds: repeat --datasets, add --n-seeds N (or --seeds 0 1 2) and, for unimol, several
+# --learning-rate values; one model per combination
+train-model --model unimol --n-seeds 3 --learning-rate 1e-2 1e-3 1e-4 \
+    --datasets admet \
+    --datasets admet pubchem:CYP1A2 bindingdb:CYP2C8 \
+    --datasets pubchem:CYP1A2 bindingdb:CYP2C8
+# pretrain on stability, then train on the ADMET data plus auxiliary heads (chemprop/chemeleon)
+train-model --model chemprop --stage tdc_hlm tdc_rlm --stage admet pubchem:CYP1A2
 ```
 
-`build-union` prints the exact command with the head list filled in. All
-`chemprop train` flags (`--batch-size`, `--accelerator`, `--split-type`,
-`--task-weights`, ...) pass through.
+`--datasets` takes `admet` (the ADMET labels) and auxiliary sources such as
+`pubchem`, `bindingdb`, `tdi` or `chembl`, as `NAME[:ISO,ISO]`; heads are named
+`{isoform}-{source}`. Only what you list is trained on: `--datasets admet` is the
+ADMET data alone, `--datasets admet pubchem` is both, and `--datasets pubchem`
+is the auxiliary data alone. The ADMET data is still loaded in every case,
+since it provides the pinned train/val split and the validation molecules; with
+no `admet` in the config its labels are just not trained on, and each ADMET head
+is scored with the same-isoform auxiliary head, so that RMSE carries a
+cross-assay calibration offset. Each head keeps its own scale and missing labels
+are masked in the loss. With several runs, outputs go to
+`<output-dir>/<config>/seed<N>` (default `results/<model>/...`). Shared flags:
+`--target-columns`, `--split-strategy`, `--split-seed`, `--epochs`, `--seed`,
+`--output-dir`.
+
+Chemprop-based models pass unknown flags (`--batch-size`, `--accelerator`,
+`--task-weights`, ...) through to `chemprop train`. To train on a ready table
+instead, `--data-path data/union_train.csv --target-columns <all heads>`
+(`build-union` prints the exact command with the head list filled in).
+`train-chemprop` and `train-unimol` remain as aliases for the matching
+`--model`. On SCC, `scripts/train_model.qsub` forwards its arguments to
+`train-model`. To add a model, write a `Backend` in
+`src/models/training/` and register it in `BACKENDS`.
 
 ```bash
 head-search                # search auxiliary-head subsets on the pinned split (single / greedy / ablation / exhaustive)
