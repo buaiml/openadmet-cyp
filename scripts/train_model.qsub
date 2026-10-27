@@ -11,7 +11,6 @@
 module load miniconda
 conda activate cyp
 
-export PYTHONNOUSERSITE=1      # don't let ~/.local packages shadow the conda env
 cd "$SGE_O_WORKDIR"
 
 # Data is gitignored; fetch it once on the cluster (skips files already present):
