@@ -130,6 +130,14 @@ names below; several names are hstacked into one feature matrix.
 | `count_morgan` | `CountMorganFingerprint` | 2048 | same generator, substructure counts |
 | `maccs` | `MACCS` | 167 | MACCS structural keys |
 | `mordred` | `MordredDescriptors` | 1613 | Mordred 2D descriptors (`mordredcommunity`); missing values encoded as 0 |
+| `xtb_solv_v1` | `XTBSolvation` | 9 | GFN2-xTB (`tblite`) ALPB water/octanol solvation, xTB logP, heuristic logD at pH 7.4; slow, see note below |
+| `xtb_elec_v1` | `XTBElectronic` | 24 | Boltzmann-averaged GFN2-xTB FMO energies, charges, SASA, shape, flexibility; shares conformers with `xtb_solv_v1` |
+
+The xTB blocks embed up to 10 ETKDG/MMFF conformers per molecule and run three
+xTB single points each. Cost is seconds per molecule, so the first run is the
+expensive one (results are cached in `data/features/`). Worker processes come from
+`XTB_NJOBS`, else `NSLOTS` (SGE), else the CPU count. Request both blocks in one
+call (`--input xtb_solv_v1 xtb_elec_v1`) to compute each molecule once.
 
 ```bash
 evaluate-models --input morgan                          # one representation
