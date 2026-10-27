@@ -29,6 +29,20 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def check_cuda() -> None:
+    """Fail early, with the GPU and torch details, if this torch build has no kernels for the device."""
+    try:
+        torch.zeros(4, dtype=torch.long, device="cuda").eq(0).sum().item()  # forces a real kernel launch
+    except RuntimeError as exc:
+        major, minor = torch.cuda.get_device_capability()
+        raise RuntimeError(
+            f"{torch.cuda.get_device_name()} (sm_{major}{minor}) has no kernels in this torch build "
+            f"(torch {torch.__version__}, CUDA {torch.version.cuda}, built for {torch.cuda.get_arch_list()}). "
+            "Request a supported GPU (-l gpu_c=...), install a torch build that includes this architecture, "
+            f"or pass --cpu.\n{exc}"
+        ) from exc
+
+
 class UnimolBackend(Backend):
     results_dir = Path("results/unimol")
     requires_datasets = True
@@ -52,6 +66,8 @@ class UnimolBackend(Backend):
         train_df, val_df, target_columns, eval_map = prepare_joint_split(specs, args, args.parser)
         datasets = args.datasets or []
         use_cuda = torch.cuda.is_available() and not args.cpu
+        if use_cuda:
+            check_cuda()
 
         base_dir = args.output_dir or Path("results/unimol") / args.run_label
         output_dir = base_dir / f"lr_{args.learning_rate}_seed_{args.seed}"

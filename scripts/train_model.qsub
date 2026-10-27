@@ -15,6 +15,9 @@ cd "$SGE_O_WORKDIR"
 
 python -c "import omegaconf;from unimol_tools import UniMolRepr; print('Unimol Environment Successfully Found')"
 
+nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, torch.cuda.get_arch_list())"
+
 # Data is gitignored; fetch it once on the cluster (skips files already present):
 #   download-data
 if [ ! -f data/train.csv ] || [ ! -d data/metabolism ]; then
