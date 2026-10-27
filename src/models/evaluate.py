@@ -17,7 +17,7 @@ from rich.table import Table
 from data_tools.inputs import INPUT_REGISTRY, featurize, is_known_input
 from data_tools.load import load_data
 from models import REGISTRY, CYPModel
-from models.utils import drop_nan_rows
+from models.utils import drop_nan_rows, zero_nonfinite_features
 
 _CYP_TARGETS = [
     "CYP1A2_pIC50_direct_inhibition",
@@ -364,22 +364,21 @@ def main() -> None:
     # target -> (model, input) -> {val row index: prediction}
     corr_preds: dict[str, dict[tuple[str, str], dict[int, float]]] = {}
     blind_df = pl.read_csv(args.data_dir / "test.csv") if args.predict_blind else None
-    # (model, input) -> target -> prediction per blind row (NaN where features are NaN)
+    # (model, input) -> target -> prediction per blind row
     blind_preds: dict[tuple[str, str], dict[str, np.ndarray]] = {}
     for input_names in input_sets:
         input_label = " + ".join(input_names)
         # Features don't depend on the target isoform, so compute once and reuse across isoforms.
-        train_features = featurize(train_df, input_names, cache_dir)
-        val_features = featurize(val_df, input_names, cache_dir)
+        train_features = zero_nonfinite_features(
+            featurize(train_df, input_names, cache_dir), f"train/{input_label}", train_df["SMILES"].to_list(),
+        )
+        val_features = zero_nonfinite_features(
+            featurize(val_df, input_names, cache_dir), f"val/{input_label}", val_df["SMILES"].to_list(),
+        )
         if blind_df is not None:
-            blind_features = featurize(blind_df, input_names, cache_dir)
-            blind_valid = ~np.isnan(blind_features).any(axis=1)
-            if not blind_valid.all():
-                print(
-                    f"Dropped {int((~blind_valid).sum())} of {len(blind_df)} blind molecules with NaN features "
-                    f"({input_label}); their predictions are left empty",
-                    file=sys.stderr,
-                )
+            blind_features = zero_nonfinite_features(
+                featurize(blind_df, input_names, cache_dir), f"blind/{input_label}", blind_df["SMILES"].to_list(),
+            )
         for target in args.targets:
             label = f"{target}, {input_label}"
             X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{label}")
@@ -409,8 +408,7 @@ def main() -> None:
                             for smiles, actual, pred in zip(val_smiles, y_val, predictions)
                         )
                 if blind_df is not None:
-                    blind_pred = np.full(len(blind_df), np.nan)
-                    blind_pred[blind_valid] = model.predict(blind_features[blind_valid])
+                    blind_pred = model.predict(blind_features)
                     blind_preds.setdefault((cls.name, input_label), {})[target] = blind_pred
                 results.append((target, cls.name, input_label, {**metrics, "n_train": len(y_train), "n_val": len(y_val)}))
 
