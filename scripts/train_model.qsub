@@ -13,6 +13,8 @@ conda activate cyp
 
 cd "$SGE_O_WORKDIR"
 
+python -c "import omegaconf;from unimol_tools import UniMolRepr; print('Unimol Environment Successfully Found')"
+
 # Data is gitignored; fetch it once on the cluster (skips files already present):
 #   download-data
 if [ ! -f data/train.csv ] || [ ! -d data/metabolism ]; then

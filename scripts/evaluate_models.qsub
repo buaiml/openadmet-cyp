@@ -13,5 +13,7 @@ conda activate cyp
 
 cd "$SGE_O_WORKDIR"
 
+python -c "import omegaconf;from unimol_tools import UniMolRepr; print('Unimol Environment Successfully Found')"
+
 # Extra args pass through: qsub scripts/evaluate_models.qsub --input chemeleon --models decision_tree
 evaluate-models "$@"
