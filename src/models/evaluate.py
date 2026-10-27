@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import inspect
 import re
 import sys
 from pathlib import Path
@@ -105,16 +106,59 @@ def _evaluate_model(
     return (metrics, predictions) if return_predictions else metrics
 
 
-def _cross_validate(
+_ENSEMBLE_METHODS = {"average": np.mean, "min": np.min, "max": np.max}
+
+
+def _combine(predictions: list[np.ndarray], method: str) -> np.ndarray:
+    """Reduce a list of equal-length prediction vectors to one with the ensemble method."""
+    return _ENSEMBLE_METHODS[method](np.stack(predictions), axis=0)
+
+
+def _fit_members(
     cls: type[CYPModel],
-    X: np.ndarray,
-    y: np.ndarray,
-    folds: np.ndarray,
-) -> dict[str, float]:
-    """Fit a fresh model per fold, score each held-out fold, and mean each metric over folds."""
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    X_blind: np.ndarray | None,
+    folds: np.ndarray | None,
+    seeds: list[int | None],
+) -> dict:
+    """Fit one model per (seed, fold) and collect what each predicts.
+
+    Without folds each seed is fit on all training rows. With folds each model is fit on the
+    other folds and also predicts its own held-out fold. A seed of None keeps the model's
+    default; models without a `random_state` argument are fit once, since seeds can't differ.
+    """
+    if "random_state" not in inspect.signature(cls.__init__).parameters:
+        seeds = [None]
+    members: dict = {"val": [], "blind": [], "holdout": {}}
+    for seed in seeds:
+        for k in ([None] if folds is None else np.unique(folds).tolist()):
+            model = cls() if seed is None else cls(random_state=seed)
+            fit_rows = np.ones(len(y_train), dtype=bool) if k is None else folds != k
+            model.fit(X_train[fit_rows], y_train[fit_rows])
+            members["val"].append(model.predict(X_val))
+            if X_blind is not None:
+                members["blind"].append(model.predict(X_blind))
+            if k is not None:
+                members["holdout"].setdefault(k, []).append(model.predict(X_train[folds == k]))
+    return members
+
+
+def _collapse(members: list[dict], method: str) -> dict:
+    """Combine member predictions (over seeds and folds, or over models) into one prediction set."""
+    return {
+        "val": _combine([m for g in members for m in g["val"]], method),
+        "blind": _combine([m for g in members for m in g["blind"]], method) if members[0]["blind"] else None,
+        "holdout": {k: _combine([m for g in members for m in g["holdout"][k]], method) for k in members[0]["holdout"]},
+    }
+
+
+def _cv_metrics(holdout: dict[int, np.ndarray], y: np.ndarray, folds: np.ndarray) -> dict[str, float]:
+    """Score each fold's held-out predictions and mean every metric over folds."""
     per_fold = [
-        _evaluate_model(cls(), X[folds != k], y[folds != k], X[folds == k], y[folds == k])
-        for k in np.unique(folds)
+        _compute_metrics(pl.Series("actual", y[folds == k].tolist()), pl.Series("prediction", pred.tolist()))
+        for k, pred in sorted(holdout.items())
     ]
     sizes = {"n_train": len(y) - len(y) / len(per_fold), "n_val": len(y) / len(per_fold)}
     return {
@@ -312,6 +356,21 @@ def main() -> None:
         help="Fold assignment strategy for --nfolds (default: same as --split). "
         "Scaffold and Butina keep each group within one fold.",
     )
+    parser.add_argument(
+        "--nseeds",
+        type=int,
+        default=1,
+        help="Train each model with this many seeds (--seed, --seed+1, ...) and ensemble them. "
+        "Models without a random_state argument are trained once. Default: 1 (the model's own default seed)",
+    )
+    parser.add_argument(
+        "--ensemble",
+        default=None,
+        choices=list(_ENSEMBLE_METHODS),
+        help="How to combine predictions across folds (--nfolds), seeds (--nseeds) and, when several "
+        "--models are given, across models, which adds an ensemble row. Default: average whenever "
+        "--nfolds or --nseeds is used",
+    )
     parser.add_argument("--models", nargs="+", default=["all"], help="Model names to evaluate, or 'all'")
     parser.add_argument(
         "--targets",
@@ -369,6 +428,10 @@ def main() -> None:
     if args.nfolds is None and args.cv_split is not None:
         parser.error("--cv-split requires --nfolds")
     args.cv_split = args.cv_split or args.split
+    if args.nseeds < 1:
+        parser.error(f"--nseeds must be >= 1, got {args.nseeds}")
+    method = args.ensemble or "average"
+    seeds: list[int | None] = [None] if args.nseeds == 1 else [args.seed + i for i in range(args.nseeds)]
 
     if not 0.0 < args.val_split < 1.0:
         print(f"--val-split must be in (0, 1), got {args.val_split}", file=sys.stderr)
@@ -444,39 +507,45 @@ def main() -> None:
             val_index = np.flatnonzero(val_mask)
             if args.predictions_out is not None:
                 val_smiles = val_df["SMILES"].to_numpy()[val_mask]
-            for cls in model_classes:
-                model = cls()
-                if args.predictions_out is None and not args.correlation:
-                    metrics = _evaluate_model(model, X_train, y_train, X_val, y_val)
-                else:
-                    metrics, predictions = _evaluate_model(
-                        model, X_train, y_train, X_val, y_val, return_predictions=True,
+            fold_ids = None if folds is None else folds[train_mask]
+            collapsed = [
+                (cls.name, _collapse([_fit_members(
+                    cls, X_train, y_train, X_val, blind_features if blind_df is not None else None, fold_ids, seeds,
+                )], method))
+                for cls in model_classes
+            ]
+            if len(collapsed) > 1 and (args.ensemble or folds is not None or args.nseeds > 1):
+                as_members = [
+                    {"val": [c["val"]], "blind": [] if c["blind"] is None else [c["blind"]],
+                     "holdout": {k: [v] for k, v in c["holdout"].items()}}
+                    for _, c in collapsed
+                ]
+                collapsed.append((f"ensemble[{method}]", _collapse(as_members, method)))
+            for name, out in collapsed:
+                predictions = out["val"]
+                metrics = _compute_metrics(pl.Series("actual", y_val.tolist()), pl.Series("prediction", predictions.tolist()))
+                if args.correlation:
+                    corr_preds.setdefault(target, {})[(name, input_label)] = dict(
+                        zip(val_index.tolist(), predictions.tolist())
                     )
-                    if args.correlation:
-                        corr_preds.setdefault(target, {})[(cls.name, input_label)] = dict(
-                            zip(val_index.tolist(), predictions.tolist())
-                        )
-                    if args.predictions_out is not None:
-                        prediction_rows.extend(
-                            dict(zip(_PREDICTION_COLUMNS, (
-                                smiles, target, cls.name, input_label, args.split, args.seed, float(actual), float(pred),
-                            )))
-                            for smiles, actual, pred in zip(val_smiles, y_val, predictions)
-                        )
+                if args.predictions_out is not None:
+                    prediction_rows.extend(
+                        dict(zip(_PREDICTION_COLUMNS, (
+                            smiles, target, name, input_label, args.split, args.seed, float(actual), float(pred),
+                        )))
+                        for smiles, actual, pred in zip(val_smiles, y_val, predictions)
+                    )
                 if blind_df is not None:
-                    blind_pred = model.predict(blind_features)
-                    blind_preds.setdefault((cls.name, input_label), {})[target] = blind_pred
-                results.append((target, cls.name, input_label, {**metrics, "n_train": len(y_train), "n_val": len(y_val)}))
-                if folds is not None:
-                    cv_results.append(
-                        (target, cls.name, input_label, _cross_validate(cls, X_train, y_train, folds[train_mask]))
-                    )
+                    blind_preds.setdefault((name, input_label), {})[target] = out["blind"]
+                results.append((target, name, input_label, {**metrics, "n_train": len(y_train), "n_val": len(y_val)}))
+                if fold_ids is not None:
+                    cv_results.append((target, name, input_label, _cv_metrics(out["holdout"], y_train, fold_ids)))
 
     if blind_df is not None:
         out_dir = Path("results")
         out_dir.mkdir(parents=True, exist_ok=True)
         for (name, input_label), by_target in blind_preds.items():
-            path = out_dir / f"{name}_{re.sub(r'[^\w+.-]', '_', input_label.replace(' + ', '+'))}_blind_predictions.csv"
+            path = out_dir / f"{re.sub(r'[^\w+.-]', '_', name)}_{re.sub(r'[^\w+.-]', '_', input_label.replace(' + ', '+'))}_blind_predictions.csv"
             blind_df.select(["Molecule_Name", "SMILES"]).with_columns(
                 [pl.Series(target, pred) for target, pred in by_target.items()]
             ).write_csv(path)
@@ -502,6 +571,8 @@ def main() -> None:
         f"[dim]input[/]="
         + escape(_short(" | ".join(" + ".join(g) for g in args.input)))
         + f"  [dim]split[/]={args.split}  [dim]seed[/]={args.seed}"
+        + (f"  [dim]nseeds[/]={args.nseeds}" if args.nseeds > 1 else "")
+        + (f"  [dim]ensemble[/]={method}" if args.ensemble or folds is not None or args.nseeds > 1 else "")
     )
     _print_results(results, args.sort_by)
     if cv_results:
