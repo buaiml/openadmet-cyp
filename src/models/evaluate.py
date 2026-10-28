@@ -142,8 +142,18 @@ def main() -> None:
         X_train, y_train = drop_nan_rows(train_features, train_df[target].to_numpy(), label=f"train/{target}")
         X_val, y_val = drop_nan_rows(val_features, val_df[target].to_numpy(), label=f"val/{target}")
         for cls in model_classes:
-            metrics = _evaluate_model(cls(), X_train, y_train, X_val, y_val)
+            model = cls()
+            metrics = _evaluate_model(model, X_train, y_train, X_val, y_val)
             results.append((target, cls.name, metrics))
+
+            predictions = model.predict(X_val)
+            output_dir = Path("results") / f"holdout_{args.split}_seed{args.seed}"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            pl.DataFrame({
+                "experimental_pIC50": y_val,
+                "predicted_pIC50": predictions,
+            }).write_csv(output_dir / f"{cls.name}_{target}.csv")
 
     reverse = args.sort_by == "R2"
     results.sort(key=lambda r: (r[0], -r[2][args.sort_by] if reverse else r[2][args.sort_by]))
