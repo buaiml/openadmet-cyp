@@ -7,7 +7,7 @@ import pytest
 import subprocess
 import sys
 
-from models.train_chemprop import build_command
+from models.training.chemprop import build_command
 from polars.testing import assert_frame_equal
 from models.oof_chemprop import _generate_chemprop_fold_predictions
 from models.oof import _SCORED_DEFAULT

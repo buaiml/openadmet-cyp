@@ -13,7 +13,7 @@ from pathlib import Path
 import polars as pl
 
 from models.oof import _SCORED_DEFAULT, _convert_chemprop_predictions
-from models.train_chemprop import build_command
+from models.training.chemprop import build_command
 
 
 def _generate_chemprop_fold_predictions(

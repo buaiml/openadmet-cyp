@@ -19,7 +19,7 @@ from models.oof_chemprop import (
     _resolve_chemprop_config,
     _split_internal_validation,
 )
-from models.train_chemprop import build_command
+from models.training.chemprop import build_command
 from models.utils import drop_nan_rows
 
 
