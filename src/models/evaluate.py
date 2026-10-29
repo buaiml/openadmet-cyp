@@ -170,6 +170,18 @@ def _cv_metrics(holdout: dict[int, np.ndarray], y: np.ndarray, folds: np.ndarray
     }
 
 
+# Same cutoff as validation.r_squared_filtering in the run-ensemble pipeline.
+_CV_FILTER_R2 = 0.3
+
+
+def _oof_r2(holdout: dict[int, np.ndarray], y: np.ndarray, folds: np.ndarray) -> float:
+    """R² of the out-of-fold predictions pooled over all folds."""
+    oof = np.empty(len(y))
+    for k, pred in holdout.items():
+        oof[folds == k] = pred
+    return _compute_metrics(pl.Series("actual", y.tolist()), pl.Series("prediction", oof.tolist()))["R2"]
+
+
 def _resolve_models(names: list[str]) -> list[type[CYPModel]]:
     """Return model classes for the given names, or all registered models if names == ['all']."""
     if names == ["all"]:
@@ -371,6 +383,14 @@ def main() -> None:
         "--models are given, across models, which adds an ensemble row. Default: average whenever "
         "--nfolds or --nseeds is used",
     )
+    parser.add_argument(
+        "--cv-filter",
+        default=None,
+        choices=["r2"],
+        help="Drop models from the multi-model ensemble row per target when their seed-averaged out-of-fold "
+        f"R² is below {_CV_FILTER_R2} (as in run-ensemble). Requires --nfolds and several --models. "
+        "If no model passes, all are kept with a warning. Default: no filtering",
+    )
     parser.add_argument("--models", nargs="+", default=["all"], help="Model names to evaluate, or 'all'")
     parser.add_argument(
         "--targets",
@@ -428,6 +448,8 @@ def main() -> None:
     if args.nfolds is None and args.cv_split is not None:
         parser.error("--cv-split requires --nfolds")
     args.cv_split = args.cv_split or args.split
+    if args.cv_filter is not None and args.nfolds is None:
+        parser.error("--cv-filter requires --nfolds")
     if args.nseeds < 1:
         parser.error(f"--nseeds must be >= 1, got {args.nseeds}")
     method = args.ensemble or "average"
@@ -451,6 +473,9 @@ def main() -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
+
+    if args.cv_filter is not None and len(model_classes) < 2:
+        print("--cv-filter only affects the multi-model ensemble row; with one model it does nothing", file=sys.stderr)
 
     cache_dir = Path(args.cache_dir)
 
@@ -515,10 +540,28 @@ def main() -> None:
                 for cls in model_classes
             ]
             if len(collapsed) > 1 and (args.ensemble or folds is not None or args.nseeds > 1):
+                members = collapsed
+                if args.cv_filter == "r2":
+                    scores = {name: _oof_r2(c["holdout"], y_train, fold_ids) for name, c in collapsed}
+                    members = [(name, c) for name, c in collapsed if scores[name] >= _CV_FILTER_R2]
+                    dropped = ", ".join(f"{n} (R²={r:.3f})" for n, r in scores.items() if r < _CV_FILTER_R2)
+                    if not members:
+                        members = collapsed
+                        print(
+                            f"cv-filter r2: no model reaches out-of-fold R² >= {_CV_FILTER_R2} for {label}; "
+                            f"keeping all {len(collapsed)} in the ensemble ({dropped})",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"cv-filter r2: {label}: kept {len(members)}/{len(collapsed)} models"
+                            + (f", dropped {dropped}" if dropped else ""),
+                            file=sys.stderr,
+                        )
                 as_members = [
                     {"val": [c["val"]], "blind": [] if c["blind"] is None else [c["blind"]],
                      "holdout": {k: [v] for k, v in c["holdout"].items()}}
-                    for _, c in collapsed
+                    for _, c in members
                 ]
                 collapsed.append((f"ensemble[{method}]", _collapse(as_members, method)))
             for name, out in collapsed:
@@ -573,6 +616,7 @@ def main() -> None:
         + f"  [dim]split[/]={args.split}  [dim]seed[/]={args.seed}"
         + (f"  [dim]nseeds[/]={args.nseeds}" if args.nseeds > 1 else "")
         + (f"  [dim]ensemble[/]={method}" if args.ensemble or folds is not None or args.nseeds > 1 else "")
+        + (f"  [dim]cv-filter[/]={args.cv_filter}" if args.cv_filter else "")
     )
     _print_results(results, args.sort_by)
     if cv_results:
