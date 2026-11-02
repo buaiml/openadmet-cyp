@@ -1,11 +1,13 @@
 Ferric-high-spin.frcmod- Shahrokh,K; Orendt,A; Yost, G.S; and Cheatham III, T.E. Jour Comp Chem (2011)
 MASS
 fe  55.85
+
 BOND
 fe-nc 100.000   2.000
 fe-nd 100.000   2.000
 fe-SH  80.000   2.660
 cg-ha 341.500   1.089 # same as ce-ha  341.5    1.089 SOURCE3
+
 ANGLE
 nc-fe-nd  132.000  85.521 # average angle
 fe-nc-cc  100.000 125.320 # average angle
@@ -24,6 +26,7 @@ ha-cd-ha   38.000 117.650 # same as ha-c2-ha  38.0   117.65 SOURCE3
 cc-cg-ha   46.600 123.740 # same as cd-cd-ha  46.6   123.74 SOURCE3  
 cd-cg-ha   46.600 123.740 # same as cd-cd-ha  46.6   123.74 SOURCE3
 cd-cg-cc   63.800 130.920 # same as ce-ce-cf  63.8   130.92 SOURCE3
+
 DIHEDRAL
 X -SH-fe-X   1     9.000     180.000       2.000
 X -cc-c3-X   3     0.000     180.000       2.000
@@ -40,6 +43,9 @@ cc-nc-fe-nc  1     1.600     180.000       2.000
 cd-nd-fe-nd  1     1.600     180.000       2.000
 cc-nc-fe-SH  1     2.400     180.000       2.000
 cd-nd-fe-SH  1     2.400     180.000       2.000
+
 IMPROPER
+
 NONBON
 fe 1.8 0.01 1.0
+
