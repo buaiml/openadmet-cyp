@@ -13,6 +13,7 @@ Usage: python build_system.py --name OCNT-2310988 --smiles '<smiles>' --out DIR 
 import argparse
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -112,10 +113,16 @@ def main():
                     help="dir with HEM.mol2, CYP.mol2, IC6.frcmod (Shahrokh 2012, ferric high-spin penta-coordinate)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
+    pdb = Path(a.pdb)
+    if not pdb.exists():  # data/ is git-ignored, so fetch the crystal structure on first use
+        pdb.parent.mkdir(parents=True, exist_ok=True)
+        url = f"https://files.rcsb.org/download/{pdb.stem}.pdb"
+        print(f"fetching {url}")
+        urllib.request.urlretrieve(url, pdb)
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    heavy, fe, n = clean_pdb(a.pdb, out / "protein_heme.pdb")
+    heavy, fe, n = clean_pdb(pdb, out / "protein_heme.pdb")
     mol = Chem.AddHs(Chem.MolFromSmiles(a.smiles))
     charge = Chem.GetFormalCharge(mol)
     cid = place(mol, heavy, fe, n, a.seed)
