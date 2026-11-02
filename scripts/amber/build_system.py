@@ -69,37 +69,73 @@ def rand_rot(rng):
                      [2*(b*d-a*c), 2*(c*d+a*b), a*a-b*b-c*c+d*d]])
 
 
-def place(mol, heavy_prot, fe, n, seed=0, n_conf=20, n_try=4000):
-    """Find clash-free pose with COM near Fe + 7 A along distal normal. Heme heavy atoms are in heavy_prot."""
+def clearance_grid(heavy_prot, center, half=24.0, step=0.75):
+    """Distance from each grid point to the nearest protein/heme heavy atom."""
+    ax = np.arange(-half, half + 1e-6, step)
+    G = np.stack(np.meshgrid(ax, ax, ax, indexing="ij"), -1) + center
+    flat = G.reshape(-1, 3)
+    d = np.empty(len(flat))
+    for i in range(0, len(flat), 2000):
+        d[i:i + 2000] = np.linalg.norm(flat[i:i + 2000, None] - heavy_prot[None], axis=2).min(1)
+    return d.reshape(G.shape[:3]), ax, center
+
+
+def place(mol, heavy_prot, fe, n, seed=0, n_conf=30, n_pose=20000, want=3.0, accept=2.0):
+    """Clash-minimizing rigid-body placement in the distal pocket.
+
+    Samples conformers x random rotations x centre-of-mass positions on free grid cells
+    near Fe, scores each pose by a soft clash penalty from a precomputed clearance grid,
+    and keeps the best. Fails only if the best pose still has a heavy atom < `accept` A
+    from the protein (minimization removes the remaining mild overlaps).
+    """
     rng = np.random.default_rng(seed)
-    cids = AllChem.EmbedMultipleConfs(mol, n_conf, randomSeed=seed)
+    cids = list(AllChem.EmbedMultipleConfs(mol, n_conf, randomSeed=seed))
+    if not cids:
+        sys.exit("RDKit could not embed the ligand")
     AllChem.MMFFOptimizeMoleculeConfs(mol)
     heavy_idx = [a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1]
-    target = fe + 7.0 * n
-    best = None  # (score, cid, R, shift)
-    for thr in (3.0, 2.6, 2.2):
-        for cid in cids:
-            X = mol.GetConformer(cid).GetPositions()
-            Xc = X - X[heavy_idx].mean(0)
-            for _ in range(n_try // n_conf):
-                R = rand_rot(rng)
-                com = target + rng.uniform(-3, 3, 3)
-                P = Xc[heavy_idx] @ R.T + com
-                d = np.linalg.norm(P[:, None] - heavy_prot[None], axis=2).min()
-                if d < thr:
-                    continue
-                score = np.linalg.norm(com - target)
-                if best is None or score < best[0]:
-                    best = (score, cid, R, com, Xc)
-        if best:
-            break
-    if best is None:
-        sys.exit("no clash-free placement; pocket may be too closed - increase sampling or pick another structure")
-    _, cid, R, com, Xc = best
+    grid, ax, c0 = clearance_grid(heavy_prot, fe)
+    step = ax[1] - ax[0]
+    gshape = np.array(grid.shape)
+
+    def clear_at(P):  # P (..., 3) -> clearance, nearest grid cell
+        idx = np.rint((P - c0 - ax[0]) / step).astype(int)
+        inside = ((idx >= 0) & (idx < gshape)).all(-1)
+        idx = np.clip(idx, 0, gshape - 1)
+        return np.where(inside, grid[idx[..., 0], idx[..., 1], idx[..., 2]], 10.0)
+
+    # candidate centre-of-mass sites: free cells within 11 A of Fe, biased to the distal side
+    cells = np.argwhere(grid >= 2.5)
+    sites = cells * step + ax[0] + c0
+    rel = sites - fe
+    keep = (np.linalg.norm(rel, axis=1) < 11.0) & (rel @ n > 0.0)
+    sites = sites[keep]
+    if len(sites) == 0:
+        sys.exit("no free space on the distal side of the heme in this structure")
+    target = fe + 6.0 * n
+
+    best = (np.inf, None)
+    for cid in cids:
+        X = mol.GetConformer(cid).GetPositions()
+        Xh = X[heavy_idx] - X[heavy_idx].mean(0)
+        Rs = np.stack([rand_rot(rng) for _ in range(n_pose)])            # (N,3,3)
+        com = sites[rng.integers(0, len(sites), n_pose)]                  # (N,3)
+        P = np.einsum("nij,aj->nai", Rs, Xh) + com[:, None, :]            # (N,A,3)
+        c = clear_at(P)                                                   # (N,A)
+        pen = (np.clip(want - c, 0, None) ** 2).sum(1) + 0.02 * np.linalg.norm(com - target, axis=1)
+        k = int(pen.argmin())
+        if pen[k] < best[0]:
+            best = (pen[k], (cid, Rs[k], com[k], c[k].min()))
+    cid, R, com, cmin = best[1]
+    if cmin < accept:
+        sys.exit(f"no acceptable placement: best pose has a heavy atom {cmin:.2f} A from the protein "
+                 f"(need >= {accept}); the pocket may be too closed - try another structure")
+    print(f"placed ligand: conformer {cid}, closest protein contact {cmin:.2f} A")
+    X = mol.GetConformer(cid).GetPositions()
+    X = (X - X[heavy_idx].mean(0)) @ R.T + com
     conf = mol.GetConformer(cid)
-    newpos = Xc @ R.T + com
     for i in range(mol.GetNumAtoms()):
-        conf.SetAtomPosition(i, newpos[i].tolist())
+        conf.SetAtomPosition(i, X[i].tolist())
     return cid
 
 
