@@ -1,0 +1,29 @@
+#!/bin/bash -l
+#$ -P buaisociety
+#$ -N cyp3a4_md
+#$ -j y
+#$ -o cyp3a4_md.$TASK_ID.qlog
+#$ -t 1-10
+#$ -l h_rt=12:00:00
+#$ -l gpus=1
+#$ -pe omp 4
+# One array task per ligand in scripts/amber/ligands.csv (rows 1-10).
+# Submit from repo root:  qsub scripts/amber/run_md.qsub   (heme params default to scripts/amber/heme_params/IC6; override with -v HEME_DIR=...)
+# Output goes to /projectnb, never $HOME.
+
+module load miniconda
+module load amber        # verify: `module avail amber`; needs pmemd.cuda + AmberTools
+conda activate cyp       # needs rdkit + numpy
+
+cd "$SGE_O_WORKDIR"
+set -euo pipefail
+OUTROOT="${OUTROOT:-/projectnb/buaisociety/$USER/cyp_md}"
+export TMPDIR="$OUTROOT/tmp"; mkdir -p "$TMPDIR"
+
+LINE=$(python - <<PY
+import csv
+r = list(csv.DictReader(open("scripts/amber/ligands.csv")))[$SGE_TASK_ID - 1]
+print(r["name"], r["smiles"])
+PY
+)
+bash scripts/amber/run_md.sh ${LINE% *} "${LINE#* }" "$OUTROOT"
