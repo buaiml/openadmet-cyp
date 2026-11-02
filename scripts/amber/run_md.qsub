@@ -9,7 +9,7 @@
 #$ -pe omp 4
 # One array task per ligand in scripts/amber/ligands.csv (rows 1-10).
 # Submit from repo root:  qsub scripts/amber/run_md.qsub   (heme params default to scripts/amber/heme_params/IC6; override with -v HEME_DIR=...)
-# Output goes to /projectnb, never $HOME.
+# Output goes to <repo>/results/amber (git-ignored), never $HOME.
 
 module load miniconda
 module load amber        # verify: `module avail amber`; needs pmemd.cuda + AmberTools
@@ -17,7 +17,7 @@ conda activate cyp       # needs rdkit + numpy
 
 cd "$SGE_O_WORKDIR"
 set -euo pipefail
-OUTROOT="${OUTROOT:-/projectnb/buaisociety/$USER/cyp_md}"
+OUTROOT="${OUTROOT:-$SGE_O_WORKDIR/results/amber}"
 export TMPDIR="$OUTROOT/tmp"; mkdir -p "$TMPDIR"
 
 LINE=$(python - <<PY
