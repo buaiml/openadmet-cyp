@@ -99,7 +99,8 @@ def clean_pdb(src, dst):
     n /= np.linalg.norm(n)
     if np.dot(n, sg - fe) > 0:  # point to the distal side (away from Cys)
         n = -n
-    heavy = np.array([x for x, l in zip(xyz(prot), prot) if l[76:78].strip() != "H"])
+    both = prot + hem  # heme must be in the clash grid too
+    heavy = np.array([x for x, l in zip(xyz(both), both) if l[76:78].strip() != "H"])
     return heavy, fe, n
 
 
@@ -137,6 +138,9 @@ def place(mol, heavy_prot, fe, n, seed=0, n_conf=30, n_pose=20000, want=3.0, acc
         sys.exit("RDKit could not embed the ligand")
     AllChem.MMFFOptimizeMoleculeConfs(mol)
     heavy_idx = [a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1]
+    h_idx = [a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() == 1]
+    all_idx = heavy_idx + h_idx
+    want_vec = np.array([want] * len(heavy_idx) + [want - 0.6] * len(h_idx))  # ligand H: 2.4 A from receptor heavy atoms
     grid, ax, c0 = clearance_grid(heavy_prot, fe)
     step = ax[1] - ax[0]
     gshape = np.array(grid.shape)
@@ -160,22 +164,22 @@ def place(mol, heavy_prot, fe, n, seed=0, n_conf=30, n_pose=20000, want=3.0, acc
     best = (np.inf, None)
     for cid in cids:
         X = mol.GetConformer(cid).GetPositions()
-        Xh = X[heavy_idx] - X[heavy_idx].mean(0)
+        Xh = X[all_idx] - X[heavy_idx].mean(0)
         Rs = np.stack([rand_rot(rng) for _ in range(n_pose)])            # (N,3,3)
         com = sites[rng.integers(0, len(sites), n_pose)]                  # (N,3)
         P = np.einsum("nij,aj->nai", Rs, Xh) + com[:, None, :]            # (N,A,3)
         c = clear_at(P)                                                   # (N,A)
-        pen = (np.clip(want - c, 0, None) ** 2).sum(1) + 0.02 * np.linalg.norm(com - target, axis=1)
+        pen = (np.clip(want_vec - c, 0, None) ** 2).sum(1) + 0.02 * np.linalg.norm(com - target, axis=1)
         k = int(pen.argmin())
         if pen[k] < best[0]:
-            best = (pen[k], (cid, Rs[k], com[k], c[k].min()))
+            best = (pen[k], (cid, Rs[k], com[k], c[k][:len(heavy_idx)].min()))
     cid, R, com, cmin = best[1]
     if cmin < accept:
         sys.exit(f"no acceptable placement: best pose has a heavy atom {cmin:.2f} A from the protein "
                  f"(need >= {accept}); the pocket may be too closed - try another structure")
     print(f"placed ligand: conformer {cid}, closest protein contact {cmin:.2f} A")
     X = mol.GetConformer(cid).GetPositions()
-    X = (X - X[heavy_idx].mean(0)) @ R.T + com
+    X = (X - X[heavy_idx].mean(0)) @ R.T + com  # all atoms, original RDKit order
     conf = mol.GetConformer(cid)
     for i in range(mol.GetNumAtoms()):
         conf.SetAtomPosition(i, X[i].tolist())
@@ -248,6 +252,28 @@ quit
     (out / "tleap.in").write_text(leap)
     run(["tleap", "-f", "tleap.in"], out)
     assert (out / "system.parm7").exists(), "tleap produced no topology"
+
+    # sanity: no severe ligand/receptor overlap. H..H contacts down to ~1.0 A are fine for the
+    # minimizer; any pair involving a heavy atom must be >= 1.4 A.
+    lig_a, oth_a = [], []
+    for ln in open(out / "system.pdb"):
+        if ln[:6] in ("ATOM  ", "HETATM"):
+            r = ln[17:20].strip()
+            if r in ("WAT", "HOH", "Na+", "Cl-"):
+                continue
+            rec = ([float(ln[30:38]), float(ln[38:46]), float(ln[46:54])], ln[76:78].strip() == "H")
+            (lig_a if r == "LIG" else oth_a).append(rec)
+    O = np.array([x for x, _ in oth_a]); Oh = np.array([h for _, h in oth_a])
+    worst = (9.0, "")
+    for x, is_h in lig_a:
+        d = np.linalg.norm(O - np.array(x), axis=1)
+        need = np.where(Oh & is_h, 1.0, 1.4)  # H..H vs anything involving a heavy atom
+        margin = (d - need).min()
+        if margin < worst[0]:
+            worst = (margin, f"{d[(d - need).argmin()]:.2f} A")
+    print(f"worst ligand-receptor contact margin: {worst[0]:+.2f} A ({worst[1]})")
+    if worst[0] < 0:
+        sys.exit(f"ligand overlaps the receptor ({worst[1]}); placement must be redone")
 
     # atom numbers for the pull restraint (COM of ligand heavy atoms vs Fe)
     def atoms(mask):
