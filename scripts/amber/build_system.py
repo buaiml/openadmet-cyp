@@ -30,6 +30,32 @@ def run(cmd, cwd):
     return r.stdout
 
 
+def add_chain_breaks(lines, max_cn=2.0):
+    """Insert TER where consecutive residues are not bonded (C..N > max_cn A), so tleap does not
+    bridge the gaps in 1TQN with a stretched peptide bond; gap ends get ordinary termini."""
+    res = []  # (key, [lines])
+    for l in lines:
+        key = (l[22:27], l[17:20])
+        if not res or res[-1][0] != key:
+            res.append((key, []))
+        res[-1][1].append(l)
+
+    def xyz(grp, name):
+        for l in grp:
+            if l[12:16].strip() == name:
+                return np.array([float(l[30:38]), float(l[38:46]), float(l[46:54])])
+        return None
+
+    out = []
+    for i, (key, grp) in enumerate(res):
+        if i:
+            c, n_ = xyz(res[i - 1][1], "C"), xyz(grp, "N")
+            if c is not None and n_ is not None and np.linalg.norm(c - n_) > max_cn:
+                out.append("TER\n")
+        out.extend(grp)
+    return out
+
+
 def clean_pdb(src, dst):
     """Chain A protein + HEM, no waters/altlocs. Cys442 -> CYP. Returns (xyz heavy, Fe, normal, n_res)."""
     prot, hem = [], []
@@ -48,6 +74,9 @@ def clean_pdb(src, dst):
     def renumber(lns, start):
         out, prev, k = [], None, start - 1
         for l in lns:
+            if l.startswith("TER"):
+                out.append(l)
+                continue
             key = (l[22:27], l[17:20])
             if key != prev:
                 k += 1
@@ -55,7 +84,7 @@ def clean_pdb(src, dst):
             out.append(f"{l[:22]}{k:4d} {l[27:]}")
         return out, k
 
-    prot_r, last = renumber(prot, 1)
+    prot_r, last = renumber(add_chain_breaks(prot), 1)
     hem_r, _ = renumber(hem, last + 1)
     with open(dst, "w") as f:
         f.writelines(prot_r + ["TER\n"] + hem_r + ["END\n"])
@@ -176,9 +205,9 @@ def main():
     mol = Chem.AddHs(Chem.MolFromSmiles(a.smiles))
     charge = Chem.GetFormalCharge(mol)
     cid = place(mol, heavy, fe, n, a.seed)
-    Chem.MolToPDBFile(mol, str(out / "lig_placed.pdb"), confId=cid)
+    Chem.MolToMolFile(mol, str(out / "lig_placed.mol"), confId=cid)  # keeps bond orders (PDB loses them)
 
-    run(["antechamber", "-i", "lig_placed.pdb", "-fi", "pdb", "-o", "lig.mol2", "-fo", "mol2",
+    run(["antechamber", "-i", "lig_placed.mol", "-fi", "mdl", "-o", "lig.mol2", "-fo", "mol2",
          "-c", "bcc", "-nc", str(charge), "-at", "gaff2", "-rn", "LIG", "-pf", "y"], out)
     run(["parmchk2", "-i", "lig.mol2", "-f", "mol2", "-o", "lig.frcmod", "-s", "gaff2"], out)
 
