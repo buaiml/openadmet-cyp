@@ -43,8 +43,22 @@ def clean_pdb(src, dst):
             continue
         (hem if res == "HEM" else prot).append(ln)
     prot = [ln.replace("CYS A 442", "CYP A 442") if int(ln[22:26]) == CYS_RES else ln for ln in prot]
+    # tleap addresses residues by PDB number, and 1TQN numbering has gaps: renumber 1..N so the
+    # index used in the tleap `bond` command equals the residue's position in the chain.
+    def renumber(lns, start):
+        out, prev, k = [], None, start - 1
+        for l in lns:
+            key = (l[22:27], l[17:20])
+            if key != prev:
+                k += 1
+                prev = key
+            out.append(f"{l[:22]}{k:4d} {l[27:]}")
+        return out, k
+
+    prot_r, last = renumber(prot, 1)
+    hem_r, _ = renumber(hem, last + 1)
     with open(dst, "w") as f:
-        f.writelines(prot + ["TER\n"] + hem + ["END\n"])
+        f.writelines(prot_r + ["TER\n"] + hem_r + ["END\n"])
     xyz = lambda lns: np.array([[float(l[30:38]), float(l[38:46]), float(l[46:54])] for l in lns])
     names = lambda lns: [l[12:16].strip() for l in lns]
     hx, hn = xyz(hem), names(hem)
@@ -183,7 +197,7 @@ set CYP tail CYP.1.C
 loadamberparams lig.frcmod
 LIG = loadmol2 lig.mol2
 prot = loadpdb protein_heme.pdb
-bond prot.{CYS_RES}.SG prot.HEMRES.FE
+bond prot.CYSRES.SG prot.HEMRES.FE
 sys = combine {{prot LIG}}
 solvateoct sys TIP3PBOX 10.0
 addIonsRand sys Na+ 0
@@ -200,7 +214,8 @@ quit
             if not seen or seen[-1] != k:
                 seen.append(k)
     hem_idx = [i for i, k in enumerate(seen, 1) if k[1] == "HEM"][0]
-    leap = leap.replace("HEMRES", str(hem_idx))
+    cys_idx = [i for i, k in enumerate(seen, 1) if k[1] == "CYP"][0]
+    leap = leap.replace("HEMRES", str(hem_idx)).replace("CYSRES", str(cys_idx))
     (out / "tleap.in").write_text(leap)
     run(["tleap", "-f", "tleap.in"], out)
     assert (out / "system.parm7").exists(), "tleap produced no topology"
