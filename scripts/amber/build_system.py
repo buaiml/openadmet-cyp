@@ -186,29 +186,15 @@ def place(mol, heavy_prot, fe, n, seed=0, n_conf=30, n_pose=20000, want=3.0, acc
     return cid
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--name", required=True)
-    ap.add_argument("--smiles", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--pdb", default=str(Path(__file__).resolve().parents[2] / "data/proteins/1TQN.pdb"))
-    ap.add_argument("--heme-dir", default=str(Path(__file__).resolve().parent / "heme_params/IC6"),
-                    help="dir with HEM.mol2, CYP.mol2, IC6.frcmod (Shahrokh 2012, ferric high-spin penta-coordinate)")
-    ap.add_argument("--seed", type=int, default=0)
-    a = ap.parse_args()
-    pdb = Path(a.pdb)
-    if not pdb.exists():  # data/ is git-ignored, so fetch the crystal structure on first use
-        pdb.parent.mkdir(parents=True, exist_ok=True)
-        url = f"https://files.rcsb.org/download/{pdb.stem}.pdb"
-        print(f"fetching {url}")
-        urllib.request.urlretrieve(url, pdb)
-    out = Path(a.out).resolve()
-    out.mkdir(parents=True, exist_ok=True)
+class Overlap(Exception):
+    """Built system has a ligand/receptor overlap; retry with another placement seed."""
 
+
+def build(a, pdb, out, seed):
     heavy, fe, n = clean_pdb(pdb, out / "protein_heme.pdb")
     mol = Chem.AddHs(Chem.MolFromSmiles(a.smiles))
     charge = Chem.GetFormalCharge(mol)
-    cid = place(mol, heavy, fe, n, a.seed)
+    cid = place(mol, heavy, fe, n, seed)
     Chem.MolToMolFile(mol, str(out / "lig_placed.mol"), confId=cid)  # keeps bond orders (PDB loses them)
 
     run(["antechamber", "-i", "lig_placed.mol", "-fi", "mdl", "-o", "lig.mol2", "-fo", "mol2",
@@ -273,7 +259,7 @@ quit
             worst = (margin, f"{d[(d - need).argmin()]:.2f} A")
     print(f"worst ligand-receptor contact margin: {worst[0]:+.2f} A ({worst[1]})")
     if worst[0] < 0:
-        sys.exit(f"ligand overlaps the receptor ({worst[1]}); placement must be redone")
+        raise Overlap(f"ligand overlaps the receptor ({worst[1]})")
 
     # atom numbers for the pull restraint (COM of ligand heavy atoms vs Fe)
     def atoms(mask):
@@ -287,6 +273,35 @@ quit
         " &rst iat=-1,-1, igr1=" + ",".join(map(str, lig)) + f", igr2={fe_i[0]},\n"
         "   r1=0.0, r2=0.0, r3=6.0, r4=7.0, rk2=10.0, rk3=10.0, /\n")
     print(f"built {out}  lig_heavy={len(lig)} fe={fe_i[0]} charge={charge}")
+
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--name", required=True)
+    ap.add_argument("--smiles", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--pdb", default=str(Path(__file__).resolve().parents[2] / "data/proteins/1TQN.pdb"))
+    ap.add_argument("--heme-dir", default=str(Path(__file__).resolve().parent / "heme_params/IC6"),
+                    help="dir with HEM.mol2, CYP.mol2, IC6.frcmod (Shahrokh 2012, ferric high-spin penta-coordinate)")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--attempts", type=int, default=5, help="placement retries (seed, seed+1, ...)")
+    a = ap.parse_args()
+    pdb = Path(a.pdb)
+    if not pdb.exists():  # data/ is git-ignored, so fetch the crystal structure on first use
+        pdb.parent.mkdir(parents=True, exist_ok=True)
+        url = f"https://files.rcsb.org/download/{pdb.stem}.pdb"
+        print(f"fetching {url}")
+        urllib.request.urlretrieve(url, pdb)
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    for attempt in range(a.attempts):
+        seed = a.seed + attempt
+        try:
+            return build(a, pdb, out, seed)
+        except Overlap as e:
+            print(f"attempt {attempt + 1}/{a.attempts} (seed {seed}): {e}; retrying")
+    sys.exit(f"no overlap-free placement after {a.attempts} attempts")
 
 
 if __name__ == "__main__":

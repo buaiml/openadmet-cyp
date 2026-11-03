@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 HEME_DIR="${HEME_DIR:-$HERE/heme_params/IC6}"
 PMEMD="${PMEMD:-pmemd.cuda}"
 
-[ -f "$D/system.parm7" ] || python "$HERE/build_system.py" --name "$NAME" --smiles "$SMILES" --out "$D" \
+[ -f "$D/pull.disang" ] || python "$HERE/build_system.py" --name "$NAME" --smiles "$SMILES" --out "$D" \
     --heme-dir "$HEME_DIR"
 cd "$D"
 
