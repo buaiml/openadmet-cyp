@@ -556,6 +556,66 @@ def _print_stacks(reports: list[tuple[str, str, str, list[str], np.ndarray, floa
         console.print(f"[dim]{escape(note)}[/]")
 
 
+def _pair_correlation(a: dict[int, float], b: dict[int, float]) -> float:
+    """Pearson r of two prediction sets over their shared validation rows (NaN if undefined)."""
+    shared = sorted(a.keys() & b.keys())
+    x = np.array([a[k] for k in shared])
+    y = np.array([b[k] for k in shared])
+    if len(shared) < 2 or x.std() == 0 or y.std() == 0:
+        return float("nan")
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _md_cell(value: float, fmt: str = ".3f") -> str:
+    return "n/a" if np.isnan(value) else format(value, fmt)
+
+
+def _write_markdown(
+    path: Path,
+    header: str,
+    sections: list[tuple[str, list[tuple[str, str, str, dict[str, float]]]]],
+    sort_by: str,
+    corr_preds: dict[str, dict[tuple[str, str], dict[int, float]]] | None = None,
+) -> None:
+    """Write full-name (never ellipsized) result tables and correlation matrices as markdown.
+
+    Independent of terminal width, unlike the Rich console tables.
+    """
+    lines = ["# evaluate-models results", "", f"`{header}`", ""]
+    reverse = not _LOWER_IS_BETTER[sort_by]
+    for title, results in sections:
+        by_isoform: dict[str, list[tuple[str, str, dict[str, float]]]] = {}
+        for iso, name, inp, m in results:
+            by_isoform.setdefault(iso, []).append((name, inp, m))
+        blocks = list(by_isoform.items())
+        if len(by_isoform) > 1:
+            macro = _aggregate(results)
+            macro.sort(key=lambda r: (-r[2][sort_by] if reverse else r[2][sort_by]) if not np.isnan(r[2][sort_by]) else float("inf"))
+            blocks.append(("MEAN", macro))
+        lines += [f"## {title}", ""]
+        for iso, rows in blocks:
+            lines += [f"### {iso.replace('_pIC50_direct_inhibition', '')}", ""]
+            lines.append("| # | Model | Input | Train/Val | " + " | ".join(_METRICS) + " |")
+            lines.append("|--:|---|---|---|" + "|".join("--:" for _ in _METRICS) + "|")
+            for i, (name, inp, m) in enumerate(rows, 1):
+                counts = f"{m['n_train']}/{m['n_val']}" if "n_train" in m else ""
+                cells = " | ".join(_md_cell(m[k]) for k in _METRICS)
+                lines.append(f"| {i} | {name} | {_short(inp)} | {counts} | {cells} |")
+            lines.append("")
+    for target, preds in (corr_preds or {}).items():
+        if len(preds) < 2:
+            continue
+        labels = list(preds)
+        lines += [f"## Prediction correlation (Pearson) · {target.replace('_pIC50_direct_inhibition', '')}", ""]
+        lines += [f"{i}. {a[0]} [{_short(a[1])}]" for i, a in enumerate(labels)]
+        lines += ["", "| |" + "|".join(str(i) for i in range(len(labels))) + "|", "|---|" + "|".join("--:" for _ in labels) + "|"]
+        for i, a in enumerate(labels):
+            row = [_md_cell(_pair_correlation(preds[a], preds[b]), ".2f") for b in labels]
+            lines.append(f"| {i} |" + "|".join(row) + "|")
+        lines.append("")
+    path.write_text("\n".join(lines) + "\n")
+
+
 def _print_correlations(target: str, preds: dict[tuple[str, str], dict[int, float]]) -> None:
     """Print an all-vs-all Pearson correlation matrix of validation predictions for one target.
 
@@ -575,13 +635,10 @@ def _print_correlations(target: str, preds: dict[tuple[str, str], dict[int, floa
     for i, a in enumerate(labels):
         cells = []
         for j, b in enumerate(labels):
-            shared = sorted(preds[a].keys() & preds[b].keys())
-            x = np.array([preds[a][k] for k in shared])
-            y = np.array([preds[b][k] for k in shared])
-            if len(shared) < 2 or x.std() == 0 or y.std() == 0:
+            r = _pair_correlation(preds[a], preds[b])
+            if np.isnan(r):
                 cells.append("[dim]n/a[/]")
                 continue
-            r = float(np.corrcoef(x, y)[0, 1])
             color = "dim" if i == j else "green" if r >= 0.9 else "yellow" if r >= 0.6 else "red"
             cells.append(f"[{color}]{r:.2f}[/]")
         table.add_row(escape(f"{i}  {a[0]} [{_short(a[1])}]"), *cells)
@@ -698,6 +755,11 @@ def main() -> None:
         action="store_true",
         help="After evaluating, print an all-vs-all correlation matrix of validation predictions "
         "across every (model, input) combination, per target",
+    )
+    parser.add_argument(
+        "--output-md", type=Path, default=None,
+        help="Also write full-name result tables (and the correlation matrices if --correlation is set) to this "
+        "markdown file; unlike the console tables, names are never truncated to the terminal width",
     )
     parser.add_argument("--cache-dir", default="data/features", help="Directory for cached feature matrices")
     parser.add_argument("--sort-by", default="MAE", choices=_METRICS, help="Metric to sort results by")
@@ -1029,6 +1091,17 @@ def main() -> None:
                 print(f"\n--correlation needs at least two (model, input) combinations; got {len(preds)}", file=sys.stderr)
                 break
             _print_correlations(target, preds)
+    if args.output_md:
+        header = (
+            f"input={_short(' | '.join(' + '.join(g) for g in args.input))}  split={args.split}  seed={args.seed}"
+            + (f"  nseeds={args.nseeds}" if args.nseeds > 1 else "")
+            + (f"  ensemble={method}" if ensembling else "")
+        )
+        sections = [("Validation", results)]
+        if cv_results:
+            sections.append((f"Cross-validation (cv-split={args.cv_split}, nfolds={args.nfolds})", cv_results))
+        _write_markdown(args.output_md, header, sections, args.sort_by, corr_preds if args.correlation else None)
+        console.print(f"[dim]wrote {escape(str(args.output_md))}[/]")
 
 
 if __name__ == "__main__":
