@@ -10,7 +10,7 @@ For every dataset D and each reference set R in {train, test}:
   R -> D      nearest-neighbour Tanimoto from each R molecule to D. High means D
               *covers* R's chemistry: what pretraining on D could transfer from.
   shared      molecules of D whose InChIKey connectivity block is in R. Shared with
-              test means they must be dropped before training (see build-union).
+              test means they must be dropped before training.
 
 Rows for `train` and `test` give reference points: each compared against itself
 excluding the molecule itself (leave-one-out), and against the other.

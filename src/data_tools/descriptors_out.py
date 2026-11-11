@@ -1,8 +1,8 @@
 """Materialize any registered representation as a chemprop descriptor file.
 
-`src/models/train_chemprop.py` forwards unknown flags to chemprop's own CLI
-(`train_chemprop.py:86`), so `--descriptors-path` reaches chemprop -- but nothing
-in this repo wrote such a file. This does.
+`train-model --model chemprop` forwards unknown flags to chemprop's own CLI, so
+`--descriptors-path` reaches chemprop -- but nothing in this repo wrote such a
+file. This does.
 
 The chemprop contract (verified against chemprop 2.2.3 source):
 
