@@ -6,8 +6,7 @@ Code for the OpenADMET CYP Inhibition Blind Challenge.
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -r requirements.txt
-./.venv/bin/python -m pip install -e .   # registers the CLI entry points (data, train-model, evaluate-models, ...)
+./.venv/bin/python -m pip install -e .   # installs requirements.txt and registers the CLI entry points (data, train-model, evaluate-models, ...)
 ```
 
 ## Data
@@ -23,33 +22,6 @@ download-data              # same as `data fetch all`
 Datasets are recipes in `src/data_tools/datasets.py`: a `fetch` step from the source and an optional `derive` step.
 `pubchem_aid1851` yields per-isoform auxiliary heads; `p450_family` (ChEMBL + BindingDB, Pfam PF00067) yields one
 `{gene}_{readout}_{source}` head per protein per source (IC50 only by default, so `{gene}_pIC50_{source}`).
-
-### External data as auxiliary heads
-
-External CYP measurements are **never pooled into the scored pIC50 columns**.
-Each source x isoform x readout becomes its own column, and therefore its own
-head at training time, so no cross-assay calibration is required: a shared
-D-MPNN encoder sees every molecule and every label while each head keeps its
-own scale. Chemprop masks missing targets in the loss, so the sparse block
-structure of a multi-source merge costs nothing.
-
-This replaces a pretrain-then-finetune split. One model is trained jointly on
-all heads at once, which avoids both the pooling problem and catastrophic
-forgetting during fine-tuning.
-
-**PubChem AID 1851** contributes the signal a potency-only ingest throws away.
-The panel screens five isoforms (1A2, 2C9, 2C19, 2D6, 3A4) in 15-point
-dose-response. Of its 85,715 compound x isoform rows only 40,684 have a fitted
-`Potency`, but **all** of them have `Max_Response` — including the 42,460 rows
-the screen called Inactive, which have no potency at all. Since ChEMBL-style
-potency data is truncated from below (no curve, no row), those negatives are
-what a model trained on fitted pIC50 never sees. CYP2C19 is carried as an
-extra head even though the challenge does not score it.
-
-`Max_Response` is a PERCENT change in luminescence and is mostly negative,
-because inhibiting pro-luciferin conversion *decreases* signal. It is emitted
-negated, as `{ISO}_pctinhib_aid1851`, so that larger means more inhibition —
-matching the direction of pIC50.
 
 ### Structural identity
 
@@ -131,7 +103,11 @@ three-model comparison that produced the 0.013 figure (average shift -0.0134, ra
 -0.0095 to -0.0204) the model ranking did not change.
 
 Chemprop-based models pass unknown flags (`--batch-size`, `--accelerator`,
-`--task-weights`, ...) through to `chemprop train`. To train on a ready table
+`--task-weights`, ...) through to `chemprop train`. `--input NAME [NAME ...]` adds
+any registered representation (see Representations) as extra molecule features for
+every stage: it is computed per molecule, cached in `data/features/`, and passed to
+chemprop as `--descriptors-path` (non-finite values become 0 with a warning; chemprop
+scales them by default, `--no-descriptor-scaling` turns that off). To train on a ready table
 instead, `--data-path <table.csv> --target-columns <heads>`.
 `train-unimol` remains as an alias for `--model unimol`. On SCC,
 `scripts/train_model.qsub` forwards its arguments to `train-model`. To add a
@@ -143,18 +119,15 @@ Every command takes `--help`.
 
 ```bash
 evaluate-models      # train/val metrics for the sklearn-style models; see Representations and Ensembling
-generate-results     # predictions CSV for submission from a trained model (--model, --input, --targets, --output)
 plot-results         # redraw the evaluate-models plots from a saved --predictions-out CSV
 foundation-model     # list/alias trained chemprop and unimol runs and generate their feature caches (--list, --paths, --generate-cache)
-write-descriptors    # write any registered representation as a chemprop descriptor .npz (--data-path, --input, --out)
-dataset-similarity   # nearest-neighbour Tanimoto similarity of candidate datasets to the challenge train/test molecules
 motif-report         # generate reports/pharmacophore_features.md from the pharmacophore motif table
 ```
 
 
 ## Representations
 
-`evaluate-models` and `generate-results` take `--input` with one or more of the
+`evaluate-models` takes `--input` with one or more of the
 names below; several names are hstacked into one feature matrix.
 
 | `--input` | Class | Dim | What it is |
